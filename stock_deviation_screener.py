@@ -283,6 +283,52 @@ def calc_deviation(ticker_str, name, market):
 
         zone = get_zone(cur_dev, s2l, s3l, s2u, s3u)
 
+        # ========== 買いスコア (0〜100) ==========
+        # PDFのセクション2-1の複合条件を点数化
+        score = 0
+
+        # (1) -2σへの近さ (最大40点)
+        # dist_to_2s <= 0 → 40点, 3%以内 → 30点, 5%以内 → 20点, 10%以内 → 10点
+        if dist_2s <= 0:
+            score += 40
+        elif dist_2s <= 3:
+            score += 30
+        elif dist_2s <= 5:
+            score += 20
+        elif dist_2s <= 10:
+            score += 10
+
+        # (2) -3σ到達ボーナス (最大10点)
+        if cur_dev <= s3l:
+            score += 10
+
+        # (3) 配当利回り (最大30点)
+        div_threshold = 4.0 if market == "Nikkei225" else 6.0
+        if div_yield >= div_threshold:
+            score += 30
+        elif div_yield >= div_threshold * 0.75:
+            score += 20
+        elif div_yield >= div_threshold * 0.5:
+            score += 10
+
+        # (4) ボラティリティの低さ → 大型安定株ほど高得点 (最大10点)
+        if std_d <= 3:
+            score += 10
+        elif std_d <= 5:
+            score += 7
+        elif std_d <= 7:
+            score += 3
+
+        # (5) 統計データの充実度 (最大10点)
+        if len(dev) >= 5000:
+            score += 10
+        elif len(dev) >= 3000:
+            score += 7
+        elif len(dev) >= 1000:
+            score += 3
+
+        score = min(score, 100)
+
         return {
             "ticker": ticker_str,
             "name": name,
@@ -303,6 +349,7 @@ def calc_deviation(ticker_str, name, market):
             "div_yield": div_yield,
             "div_per_share": round(div_per_share, 2) if div_per_share else 0.0,
             "div_at_2s": div_at_2s,
+            "buy_score": score,
             **yield_targets,
         }
     except Exception as e:
@@ -366,7 +413,7 @@ def main():
     # --- シート1: 全銘柄一覧 (dist_to_2sでソート) ---
     ws_all = wb.active
     ws_all.title = "All Stocks"
-    headers = ["順位", "ゾーン", "コード", "銘柄名", "市場", "株価", "25日MA",
+    headers = ["順位", "買いスコア", "ゾーン", "コード", "銘柄名", "市場", "株価", "25日MA",
                "乖離率%", "-2σ%", "-3σ%", "-2σ株価", "-3σ株価", "-2σまで%",
                "配当利回り%", "1株配当", "配当@-2σ%",
                "配当3%株価", "配当4%株価", "配当5%株価", "配当6%株価",
@@ -400,75 +447,95 @@ def main():
         "EXTREME HIGH": Font(bold=True, color="FFFFFF", name="Arial"),
     }
 
-    for idx, row in df.iterrows():
-        r = idx + 2
-        ws_all.cell(row=r, column=1, value=idx + 1)
-        ws_all.cell(row=r, column=2, value=row["zone"])
-        ws_all.cell(row=r, column=3, value=row["ticker"])
-        ws_all.cell(row=r, column=4, value=row["name"])
-        ws_all.cell(row=r, column=5, value=row["market"])
-        ws_all.cell(row=r, column=6, value=row["price"]).number_format = '#,##0.00'
-        ws_all.cell(row=r, column=7, value=row["sma25"]).number_format = '#,##0.00'
-        ws_all.cell(row=r, column=8, value=row["deviation"]).number_format = '0.00"%"'
-        ws_all.cell(row=r, column=9, value=row["sigma2_lower"]).number_format = '0.00"%"'
-        ws_all.cell(row=r, column=10, value=row["sigma3_lower"]).number_format = '0.00"%"'
-        ws_all.cell(row=r, column=11, value=row["price_at_2s"]).number_format = '#,##0.0'
-        ws_all.cell(row=r, column=12, value=row["price_at_3s"]).number_format = '#,##0.0'
+    def write_stock_row(ws, r, idx, row, zone_fills, zone_fonts):
+        """1銘柄ぶんのExcel行を書き込む共通関数"""
+        c = 1
+        ws.cell(row=r, column=c, value=idx); c += 1
 
-        dist_cell = ws_all.cell(row=r, column=13, value=row["dist_to_2s"])
+        # 買いスコア
+        score_cell = ws.cell(row=r, column=c, value=row.get("buy_score", 0))
+        sc = row.get("buy_score", 0)
+        if sc >= 70:
+            score_cell.font = Font(bold=True, color="FF0000", name="Arial")
+            score_cell.fill = PatternFill("solid", fgColor="FFEBEE")
+        elif sc >= 50:
+            score_cell.font = Font(bold=True, color="FF8C00", name="Arial")
+            score_cell.fill = PatternFill("solid", fgColor="FFF3E0")
+        elif sc >= 30:
+            score_cell.font = Font(color="2E7D32", name="Arial")
+        c += 1
+
+        # ゾーン
+        zone_cell = ws.cell(row=r, column=c, value=row["zone"])
+        z = row["zone"]
+        if z in zone_fills:
+            zone_cell.fill = zone_fills[z]
+            zone_cell.font = zone_fonts.get(z, Font(name="Arial"))
+        c += 1
+
+        ws.cell(row=r, column=c, value=row["ticker"]); c += 1
+        ws.cell(row=r, column=c, value=row["name"]); c += 1
+        ws.cell(row=r, column=c, value=row["market"]); c += 1
+        ws.cell(row=r, column=c, value=row["price"]).number_format = '#,##0.00'; c += 1
+        ws.cell(row=r, column=c, value=row["sma25"]).number_format = '#,##0.00'; c += 1
+        ws.cell(row=r, column=c, value=row["deviation"]).number_format = '0.00"%"'; c += 1
+        ws.cell(row=r, column=c, value=row["sigma2_lower"]).number_format = '0.00"%"'; c += 1
+        ws.cell(row=r, column=c, value=row["sigma3_lower"]).number_format = '0.00"%"'; c += 1
+        ws.cell(row=r, column=c, value=row["price_at_2s"]).number_format = '#,##0.0'; c += 1
+        ws.cell(row=r, column=c, value=row["price_at_3s"]).number_format = '#,##0.0'; c += 1
+
+        # -2σまで%
+        dist_cell = ws.cell(row=r, column=c, value=row["dist_to_2s"])
         dist_cell.number_format = '0.00"%"'
         if row["dist_to_2s"] <= 0:
             dist_cell.font = Font(bold=True, color="FF0000", name="Arial")
         elif row["dist_to_2s"] <= 3:
             dist_cell.font = Font(bold=True, color="FF8C00", name="Arial")
+        c += 1
 
         # 配当利回り
-        div_cell = ws_all.cell(row=r, column=14, value=row["div_yield"])
-        div_cell.number_format = '0.00"%"'
         div_threshold = 4.0 if row["market"] == "Nikkei225" else 6.0
+        div_cell = ws.cell(row=r, column=c, value=row["div_yield"])
+        div_cell.number_format = '0.00"%"'
         if row["div_yield"] >= div_threshold:
             div_cell.font = Font(bold=True, color="008000", name="Arial")
         elif row["div_yield"] >= div_threshold * 0.75:
             div_cell.font = Font(color="2E7D32", name="Arial")
+        c += 1
 
-        # 年間1株配当
-        ws_all.cell(row=r, column=15, value=row["div_per_share"]).number_format = '#,##0.00'
+        ws.cell(row=r, column=c, value=row["div_per_share"]).number_format = '#,##0.00'; c += 1
 
-        # -2σ到達時の想定配当利回り
-        div2s_cell = ws_all.cell(row=r, column=16, value=row["div_at_2s"])
+        div2s_cell = ws.cell(row=r, column=c, value=row["div_at_2s"])
         div2s_cell.number_format = '0.00"%"'
         if row["div_at_2s"] >= div_threshold:
             div2s_cell.font = Font(bold=True, color="008000", name="Arial")
+        c += 1
 
-        # 配当利回りキリ番到達株価 (3%/4%/5%/6%)
-        for ci, pct in enumerate([3, 4, 5, 6], start=17):
+        # 配当キリ番株価
+        for pct in [3, 4, 5, 6]:
             val = row.get(f"price_at_{pct}pct", 0)
-            target_cell = ws_all.cell(row=r, column=ci, value=val if val > 0 else "")
-            target_cell.number_format = '#,##0.0'
-            # 現在株価がそのターゲット以下ならハイライト
+            tc = ws.cell(row=r, column=c, value=val if val > 0 else "")
+            tc.number_format = '#,##0.0'
             if val > 0 and row["price"] <= val:
-                target_cell.font = Font(bold=True, color="008000", name="Arial")
-                target_cell.fill = PatternFill("solid", fgColor="E8F5E9")
+                tc.font = Font(bold=True, color="008000", name="Arial")
+                tc.fill = PatternFill("solid", fgColor="E8F5E9")
+            c += 1
 
-        ws_all.cell(row=r, column=21, value=row["std"]).number_format = '0.000'
-        ws_all.cell(row=r, column=22, value=row["stat_days"]).number_format = '#,##0'
+        ws.cell(row=r, column=c, value=row["std"]).number_format = '0.000'; c += 1
+        ws.cell(row=r, column=c, value=row["stat_days"]).number_format = '#,##0'
 
-        # ゾーン色
-        zone_cell = ws_all.cell(row=r, column=2)
-        z = row["zone"]
-        if z in zone_fills:
-            zone_cell.fill = zone_fills[z]
-            zone_cell.font = zone_fonts[z]
+    for idx, row in df.iterrows():
+        write_stock_row(ws_all, idx + 2, idx + 1, row, zone_fills, zone_fonts)
 
     # カラム幅調整
-    col_widths = [6, 14, 10, 22, 12, 12, 12, 9, 9, 9, 12, 12, 14, 8, 10, 10, 11, 11, 11, 11, 8, 10]
+    col_widths = [6, 10, 14, 10, 22, 12, 12, 12, 9, 9, 9, 12, 12, 14, 8, 10, 10, 11, 11, 11, 11, 8, 10]
     for i, w in enumerate(col_widths, 1):
         ws_all.column_dimensions[get_column_letter(i)].width = w
 
     # フリーズペイン
     ws_all.freeze_panes = "A2"
     # オートフィルタ
-    ws_all.auto_filter.ref = f"A1:V{len(df)+1}"
+    ws_all.auto_filter.ref = f"A1:W{len(df)+1}"
 
     # --- シート2-4: マーケット別 ---
     for market_name in ["Nikkei225", "Dow30", "NASDAQ100"]:
@@ -482,39 +549,12 @@ def main():
             cell.alignment = Alignment(horizontal="center")
 
         for idx2, row in mdf.iterrows():
-            r = idx2 + 2
-            ws.cell(row=r, column=1, value=idx2 + 1)
-            ws.cell(row=r, column=2, value=row["zone"])
-            ws.cell(row=r, column=3, value=row["ticker"])
-            ws.cell(row=r, column=4, value=row["name"])
-            ws.cell(row=r, column=5, value=row["market"])
-            ws.cell(row=r, column=6, value=row["price"]).number_format = '#,##0.00'
-            ws.cell(row=r, column=7, value=row["sma25"]).number_format = '#,##0.00'
-            ws.cell(row=r, column=8, value=row["deviation"]).number_format = '0.00"%"'
-            ws.cell(row=r, column=9, value=row["sigma2_lower"]).number_format = '0.00"%"'
-            ws.cell(row=r, column=10, value=row["sigma3_lower"]).number_format = '0.00"%"'
-            ws.cell(row=r, column=11, value=row["price_at_2s"]).number_format = '#,##0.0'
-            ws.cell(row=r, column=12, value=row["price_at_3s"]).number_format = '#,##0.0'
-            ws.cell(row=r, column=13, value=row["dist_to_2s"]).number_format = '0.00"%"'
-            ws.cell(row=r, column=14, value=row["div_yield"]).number_format = '0.00"%"'
-            ws.cell(row=r, column=15, value=row["div_per_share"]).number_format = '#,##0.00'
-            ws.cell(row=r, column=16, value=row["div_at_2s"]).number_format = '0.00"%"'
-            for ci, pct in enumerate([3, 4, 5, 6], start=17):
-                val = row.get(f"price_at_{pct}pct", 0)
-                ws.cell(row=r, column=ci, value=val if val > 0 else "").number_format = '#,##0.0'
-            ws.cell(row=r, column=21, value=row["std"]).number_format = '0.000'
-            ws.cell(row=r, column=22, value=row["stat_days"]).number_format = '#,##0'
-
-            zone_cell = ws.cell(row=r, column=2)
-            z = row["zone"]
-            if z in zone_fills:
-                zone_cell.fill = zone_fills[z]
-                zone_cell.font = zone_fonts.get(z, Font(name="Arial"))
+            write_stock_row(ws, idx2 + 2, idx2 + 1, row, zone_fills, zone_fonts)
 
         for i, w in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
-        ws.auto_filter.ref = f"A1:V{len(mdf)+1}"
+        ws.auto_filter.ref = f"A1:W{len(mdf)+1}"
 
     # --- シート5: BUY候補 (dist_to_2s <= 3%) ---
     ws_buy = wb.create_sheet(title="BUY Candidates")
@@ -527,36 +567,7 @@ def main():
         cell.alignment = Alignment(horizontal="center")
 
     for idx3, row in buy_df.iterrows():
-        r = idx3 + 2
-        ws_buy.cell(row=r, column=1, value=idx3 + 1)
-        ws_buy.cell(row=r, column=2, value=row["zone"])
-        ws_buy.cell(row=r, column=3, value=row["ticker"])
-        ws_buy.cell(row=r, column=4, value=row["name"])
-        ws_buy.cell(row=r, column=5, value=row["market"])
-        ws_buy.cell(row=r, column=6, value=row["price"]).number_format = '#,##0.00'
-        ws_buy.cell(row=r, column=7, value=row["sma25"]).number_format = '#,##0.00'
-        ws_buy.cell(row=r, column=8, value=row["deviation"]).number_format = '0.00"%"'
-        ws_buy.cell(row=r, column=9, value=row["sigma2_lower"]).number_format = '0.00"%"'
-        ws_buy.cell(row=r, column=10, value=row["sigma3_lower"]).number_format = '0.00"%"'
-        ws_buy.cell(row=r, column=11, value=row["price_at_2s"]).number_format = '#,##0.0'
-        ws_buy.cell(row=r, column=12, value=row["price_at_3s"]).number_format = '#,##0.0'
-        ws_buy.cell(row=r, column=13, value=row["dist_to_2s"]).number_format = '0.00"%"'
-        ws_buy.cell(row=r, column=14, value=row["div_yield"]).number_format = '0.00"%"'
-        ws_buy.cell(row=r, column=15, value=row["div_per_share"]).number_format = '#,##0.00'
-        ws_buy.cell(row=r, column=16, value=row["div_at_2s"]).number_format = '0.00"%"'
-        for ci, pct in enumerate([3, 4, 5, 6], start=17):
-            val = row.get(f"price_at_{pct}pct", 0)
-            target_cell = ws_buy.cell(row=r, column=ci, value=val if val > 0 else "")
-            target_cell.number_format = '#,##0.0'
-            if val > 0 and row["price"] <= val:
-                target_cell.font = Font(bold=True, color="008000", name="Arial")
-                target_cell.fill = PatternFill("solid", fgColor="E8F5E9")
-        ws_buy.cell(row=r, column=21, value=row["std"]).number_format = '0.000'
-        ws_buy.cell(row=r, column=22, value=row["stat_days"]).number_format = '#,##0'
-        z = row["zone"]
-        if z in zone_fills:
-            ws_buy.cell(row=r, column=2).fill = zone_fills[z]
-            ws_buy.cell(row=r, column=2).font = zone_fonts.get(z, Font(name="Arial"))
+        write_stock_row(ws_buy, idx3 + 2, idx3 + 1, row, zone_fills, zone_fonts)
 
     for i, w in enumerate(col_widths, 1):
         ws_buy.column_dimensions[get_column_letter(i)].width = w
