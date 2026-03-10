@@ -194,7 +194,7 @@ def draw_summary_card(ax, data, idx, total):
 def draw_deviation_chart(ax, data):
     """直近N年の乖離率チャートにσバンドを重ねて描画"""
     df = data["df"].copy()
-    cutoff = datetime.now() - timedelta(days=CHART_YEARS * 365)
+    cutoff = pd.Timestamp.now(tz=df.index.tz) - timedelta(days=CHART_YEARS * 365)
     df = df[df.index >= cutoff]
 
     if df.empty:
