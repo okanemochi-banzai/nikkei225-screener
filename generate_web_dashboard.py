@@ -232,6 +232,47 @@ def generate_html(df, today):
   .neg {{ color: var(--red); }}
   .pos {{ color: var(--green); }}
   .hot {{ color: var(--orange); font-weight: 700; }}
+  .dim {{ color: var(--text-dim); }}
+
+  /* ─── Score Bar ─── */
+  .score-bar {{
+    position: relative; width: 50px; height: 22px;
+    background: var(--surface2); border-radius: 4px;
+    overflow: hidden; display: inline-flex; align-items: center;
+    justify-content: center;
+  }}
+  .score-bar span {{
+    position: relative; z-index: 2; font-size: 0.7rem;
+    font-weight: 700; font-family: 'JetBrains Mono', monospace;
+  }}
+  .score-fill {{
+    position: absolute; left: 0; top: 0; height: 100%;
+    border-radius: 4px; z-index: 1; transition: width 0.8s ease;
+  }}
+  .score-high .score-fill {{ background: linear-gradient(90deg, #dc2626, #ef4444); }}
+  .score-high span {{ color: white; }}
+  .score-mid .score-fill {{ background: linear-gradient(90deg, #ea580c, #f97316); }}
+  .score-mid span {{ color: white; }}
+  .score-low .score-fill {{ background: linear-gradient(90deg, #ca8a04, #eab308); }}
+  .score-low span {{ color: var(--bg); }}
+  .score-none .score-fill {{ background: var(--surface2); }}
+  .score-none span {{ color: var(--text-dim); }}
+
+  /* ─── Row Highlights ─── */
+  .row-hot td {{
+    background: rgba(239,68,68,0.08) !important;
+    border-left: 3px solid var(--red);
+  }}
+  .row-hot td:first-child {{ border-left: 3px solid var(--red); }}
+  .row-buy td {{ background: rgba(249,115,22,0.06) !important; }}
+  .row-warm td {{ background: rgba(234,179,8,0.04) !important; }}
+
+  /* ─── Sortable Headers ─── */
+  .sortable {{
+    cursor: pointer; user-select: none;
+    transition: color 0.2s;
+  }}
+  .sortable:hover {{ color: var(--accent); }}
 
   /* ─── Tabs ─── */
   .tabs {{
@@ -278,10 +319,20 @@ def generate_html(df, today):
   }}
 
   @media (max-width: 768px) {{
-    header h1 {{ font-size: 1.2rem; }}
-    .container {{ padding: 1rem; }}
+    header h1 {{ font-size: 1.1rem; }}
+    .container {{ padding: 0.5rem; }}
     .zone-grid {{ grid-template-columns: 1fr; }}
-    .stats-row {{ grid-template-columns: repeat(2, 1fr); }}
+    .stats-row {{ grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }}
+    .stat-card .num {{ font-size: 1.5rem; }}
+    .stat-card .lbl {{ font-size: 0.6rem; }}
+    table {{ font-size: 0.7rem; }}
+    td, th {{ padding: 0.4rem 0.5rem; }}
+    .table-wrap {{ max-height: 70vh; overflow: auto; -webkit-overflow-scrolling: touch; }}
+    .zone-badge {{ font-size: 0.55rem; padding: 1px 5px; }}
+    .score-bar {{ width: 40px; height: 18px; }}
+    .tabs {{ flex-wrap: wrap; }}
+    .tab-btn {{ font-size: 0.65rem; padding: 0.4rem 0.6rem; }}
+    .search-box input {{ font-size: 0.75rem; }}
   }}
 </style>
 </head>
@@ -335,9 +386,9 @@ def generate_html(df, today):
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>#</th><th>ゾーン</th><th>コード</th><th>銘柄名</th><th>市場</th>
-        <th>株価</th><th>乖離率</th><th>-2σ</th><th>-3σ</th>
-        <th>-2σ株価</th><th>-2σまで</th><th>配当利回り</th><th>配当@-2σ</th>
+        <th>#</th><th>スコア</th><th>ゾーン</th><th>コード</th><th>銘柄名</th><th>市場</th>
+        <th>株価</th><th>乖離率</th><th>-2σ株価</th><th>-2σまで</th>
+        <th>配当利回り</th><th>配当@-2σ</th>
         <th>配当3%</th><th>配当4%</th><th>配当5%</th><th>配当6%</th>
       </tr></thead>
       <tbody>
@@ -398,6 +449,35 @@ function filterTable() {{
     row.style.display = text.includes(q) ? '' : 'none';
   }});
 }}
+
+// ソート機能
+document.addEventListener('click', function(e) {{
+  const th = e.target.closest('.sortable');
+  if (!th) return;
+  const table = th.closest('table');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const sortKey = th.dataset.sort;
+  const dataAttr = {{'score': 'score', 'dist': 'dist', 'div': 'div', 'dev': 'dev'}}[sortKey];
+  if (!dataAttr) return;
+
+  // トグル: 昇順 ↔ 降順
+  const isAsc = th.classList.contains('sort-asc');
+  table.querySelectorAll('.sortable').forEach(s => s.classList.remove('sort-asc', 'sort-desc'));
+  th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
+
+  rows.sort((a, b) => {{
+    const va = parseFloat(a.dataset[dataAttr]) || 0;
+    const vb = parseFloat(b.dataset[dataAttr]) || 0;
+    return isAsc ? va - vb : vb - va;
+  }});
+
+  rows.forEach((row, i) => {{
+    row.cells[0].textContent = i + 1;
+    tbody.appendChild(row);
+  }});
+}});
 
 // Animate bars on load
 window.addEventListener('load', () => {{
@@ -460,29 +540,40 @@ def _row_html(rank, r):
     div_threshold = 4.0 if r.get("market") == "Nikkei225" else 6.0
     div_cls = "pos" if div_val >= div_threshold else ""
     div2s_cls = "pos" if div2s_val >= div_threshold else ""
+    score = r.get("buy_score", 0) or 0
 
-    # 配当利回りキリ番到達株価
+    # 行ハイライト
+    row_cls = ""
+    if r.get("zone") in ["STRONG BUY", "BUY ZONE"] and div_val >= div_threshold:
+        row_cls = "row-hot"
+    elif r.get("zone") in ["STRONG BUY", "BUY ZONE"]:
+        row_cls = "row-buy"
+    elif score >= 70:
+        row_cls = "row-hot"
+    elif score >= 50:
+        row_cls = "row-warm"
+
+    score_cls = "score-high" if score >= 70 else ("score-mid" if score >= 50 else ("score-low" if score >= 30 else "score-none"))
+
     price = r.get("price", 0) or 0
     yield_cells = ""
     for pct in [3, 4, 5, 6]:
         val = r.get(f"price_at_{pct}pct", 0) or 0
         if val > 0:
-            # 現在株価がターゲット以下なら緑ハイライト
             cls = "pos" if price <= val else ""
             yield_cells += f'<td class="{cls}">{val:,.0f}</td>'
         else:
-            yield_cells += '<td style="color:var(--text-dim)">—</td>'
+            yield_cells += '<td class="dim">—</td>'
 
-    return f"""<tr>
+    return f"""<tr class="{row_cls}" data-score="{score}" data-dist="{r['dist_to_2s']}" data-div="{div_val}" data-dev="{r['deviation']}">
       <td>{rank}</td>
+      <td><div class="score-bar {score_cls}"><span>{score}</span><div class="score-fill" style="width:{score}%"></div></div></td>
       <td>{_zone_badge(r['zone'])}</td>
       <td><strong>{r['ticker']}</strong></td>
       <td>{r['name']}</td>
       <td>{r['market']}</td>
       <td>{price:,.2f}</td>
       <td class="{dev_cls}">{r['deviation']:+.2f}%</td>
-      <td>{r['sigma2_lower']:+.2f}%</td>
-      <td>{r['sigma3_lower']:+.2f}%</td>
       <td>{r['price_at_2s']:,.0f}</td>
       <td class="{dist_cls}">{r['dist_to_2s']:+.1f}%</td>
       <td class="{div_cls}">{div_val:.2f}%</td>
@@ -498,9 +589,10 @@ def _full_table_html(records, table_id):
     return f"""<div class="table-wrap">
       <table id="{table_id}">
         <thead><tr>
-          <th>#</th><th>ゾーン</th><th>コード</th><th>銘柄名</th><th>市場</th>
-          <th>株価</th><th>乖離率</th><th>-2σ</th><th>-3σ</th>
-          <th>-2σ株価</th><th>-2σまで</th><th>配当利回り</th><th>配当@-2σ</th>
+          <th>#</th><th class="sortable" data-sort="score">スコア ⇅</th><th>ゾーン</th><th>コード</th><th>銘柄名</th><th>市場</th>
+          <th>株価</th><th class="sortable" data-sort="dev">乖離率 ⇅</th><th>-2σ株価</th>
+          <th class="sortable" data-sort="dist">-2σまで ⇅</th>
+          <th class="sortable" data-sort="div">配当利回り ⇅</th><th>配当@-2σ</th>
           <th>配当3%</th><th>配当4%</th><th>配当5%</th><th>配当6%</th>
         </tr></thead>
         <tbody>{rows}</tbody>
@@ -522,7 +614,8 @@ def main():
         df = pd.read_excel(xlsx_files[-1], sheet_name="All Stocks")
         # Excelのヘッダー名をCSV名にマッピング
         col_map = {
-            "順位": "rank", "ゾーン": "zone", "コード": "ticker", "銘柄名": "name",
+            "順位": "rank", "買いスコア": "buy_score", "ゾーン": "zone",
+            "コード": "ticker", "銘柄名": "name",
             "市場": "market", "株価": "price", "25日MA": "sma25",
             "乖離率%": "deviation", "-2σ%": "sigma2_lower", "-3σ%": "sigma3_lower",
             "-2σ株価": "price_at_2s", "-3σ株価": "price_at_3s",
@@ -542,12 +635,15 @@ def main():
         df["div_yield"] = 0.0
     if "div_at_2s" not in df.columns:
         df["div_at_2s"] = 0.0
+    if "buy_score" not in df.columns:
+        df["buy_score"] = 0
     for pct in [3, 4, 5, 6]:
         col = f"price_at_{pct}pct"
         if col not in df.columns:
             df[col] = 0.0
     df["div_yield"] = df["div_yield"].fillna(0.0)
     df["div_at_2s"] = df["div_at_2s"].fillna(0.0)
+    df["buy_score"] = df["buy_score"].fillna(0).astype(int)
 
     df.sort_values("dist_to_2s", ascending=True, inplace=True)
     df.reset_index(drop=True, inplace=True)
