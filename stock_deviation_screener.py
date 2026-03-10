@@ -231,6 +231,16 @@ def calc_deviation(ticker_str, name, market):
         if df.empty or len(df) < SMA_PERIOD + 100:
             return None
 
+        # 配当情報取得
+        try:
+            info = ticker.info
+            div_yield = info.get("dividendYield") or info.get("yield") or 0
+            div_yield = round(div_yield * 100, 2) if div_yield else 0.0
+            div_per_share = info.get("dividendRate") or 0.0
+        except:
+            div_yield = 0.0
+            div_per_share = 0.0
+
         df = df[["Close"]].copy()
         df.columns = ["close"]
         df["sma25"] = df["close"].rolling(SMA_PERIOD).mean()
@@ -256,6 +266,21 @@ def calc_deviation(ticker_str, name, market):
         price_3s = cur_sma * (1 + s3l / 100)
         dist_2s = ((cur_price / price_2s) - 1) * 100
 
+        # -2σ到達時の想定配当利回り
+        div_at_2s = round(div_yield * (cur_price / price_2s), 2) if price_2s > 0 and div_yield > 0 else 0.0
+
+        # 年間配当がない場合、利回りと現在株価から逆算
+        if not div_per_share and div_yield > 0:
+            div_per_share = cur_price * div_yield / 100
+
+        # 配当利回りキリ番の到達株価（年間配当 ÷ 目標利回り）
+        yield_targets = {}
+        for pct in [3, 4, 5, 6]:
+            if div_per_share > 0:
+                yield_targets[f"price_at_{pct}pct"] = round(div_per_share / (pct / 100), 1)
+            else:
+                yield_targets[f"price_at_{pct}pct"] = 0.0
+
         zone = get_zone(cur_dev, s2l, s3l, s2u, s3u)
 
         return {
@@ -275,6 +300,10 @@ def calc_deviation(ticker_str, name, market):
             "zone": zone,
             "stat_days": len(dev),
             "std": round(std_d, 3),
+            "div_yield": div_yield,
+            "div_per_share": round(div_per_share, 2) if div_per_share else 0.0,
+            "div_at_2s": div_at_2s,
+            **yield_targets,
         }
     except Exception as e:
         return None
@@ -337,9 +366,11 @@ def main():
     # --- シート1: 全銘柄一覧 (dist_to_2sでソート) ---
     ws_all = wb.active
     ws_all.title = "All Stocks"
-    headers = ["Rank", "Zone", "Ticker", "Name", "Market", "Price", "SMA25",
-               "Dev%", "-2σ%", "-3σ%", "Buy@-2σ", "Buy@-3σ", "Dist to -2σ%",
-               "StdDev", "StatDays"]
+    headers = ["順位", "ゾーン", "コード", "銘柄名", "市場", "株価", "25日MA",
+               "乖離率%", "-2σ%", "-3σ%", "-2σ株価", "-3σ株価", "-2σまで%",
+               "配当利回り%", "1株配当", "配当@-2σ%",
+               "配当3%株価", "配当4%株価", "配当5%株価", "配当6%株価",
+               "標準偏差", "統計日数"]
     ws_all.append(headers)
 
     # ヘッダースタイル
@@ -391,8 +422,36 @@ def main():
         elif row["dist_to_2s"] <= 3:
             dist_cell.font = Font(bold=True, color="FF8C00", name="Arial")
 
-        ws_all.cell(row=r, column=14, value=row["std"]).number_format = '0.000'
-        ws_all.cell(row=r, column=15, value=row["stat_days"]).number_format = '#,##0'
+        # 配当利回り
+        div_cell = ws_all.cell(row=r, column=14, value=row["div_yield"])
+        div_cell.number_format = '0.00"%"'
+        div_threshold = 4.0 if row["market"] == "Nikkei225" else 6.0
+        if row["div_yield"] >= div_threshold:
+            div_cell.font = Font(bold=True, color="008000", name="Arial")
+        elif row["div_yield"] >= div_threshold * 0.75:
+            div_cell.font = Font(color="2E7D32", name="Arial")
+
+        # 年間1株配当
+        ws_all.cell(row=r, column=15, value=row["div_per_share"]).number_format = '#,##0.00'
+
+        # -2σ到達時の想定配当利回り
+        div2s_cell = ws_all.cell(row=r, column=16, value=row["div_at_2s"])
+        div2s_cell.number_format = '0.00"%"'
+        if row["div_at_2s"] >= div_threshold:
+            div2s_cell.font = Font(bold=True, color="008000", name="Arial")
+
+        # 配当利回りキリ番到達株価 (3%/4%/5%/6%)
+        for ci, pct in enumerate([3, 4, 5, 6], start=17):
+            val = row.get(f"price_at_{pct}pct", 0)
+            target_cell = ws_all.cell(row=r, column=ci, value=val if val > 0 else "")
+            target_cell.number_format = '#,##0.0'
+            # 現在株価がそのターゲット以下ならハイライト
+            if val > 0 and row["price"] <= val:
+                target_cell.font = Font(bold=True, color="008000", name="Arial")
+                target_cell.fill = PatternFill("solid", fgColor="E8F5E9")
+
+        ws_all.cell(row=r, column=21, value=row["std"]).number_format = '0.000'
+        ws_all.cell(row=r, column=22, value=row["stat_days"]).number_format = '#,##0'
 
         # ゾーン色
         zone_cell = ws_all.cell(row=r, column=2)
@@ -402,14 +461,14 @@ def main():
             zone_cell.font = zone_fonts[z]
 
     # カラム幅調整
-    col_widths = [6, 14, 10, 22, 12, 12, 12, 9, 9, 9, 12, 12, 14, 8, 10]
+    col_widths = [6, 14, 10, 22, 12, 12, 12, 9, 9, 9, 12, 12, 14, 8, 10, 10, 11, 11, 11, 11, 8, 10]
     for i, w in enumerate(col_widths, 1):
         ws_all.column_dimensions[get_column_letter(i)].width = w
 
     # フリーズペイン
     ws_all.freeze_panes = "A2"
     # オートフィルタ
-    ws_all.auto_filter.ref = f"A1:O{len(df)+1}"
+    ws_all.auto_filter.ref = f"A1:V{len(df)+1}"
 
     # --- シート2-4: マーケット別 ---
     for market_name in ["Nikkei225", "Dow30", "NASDAQ100"]:
@@ -437,8 +496,14 @@ def main():
             ws.cell(row=r, column=11, value=row["price_at_2s"]).number_format = '#,##0.0'
             ws.cell(row=r, column=12, value=row["price_at_3s"]).number_format = '#,##0.0'
             ws.cell(row=r, column=13, value=row["dist_to_2s"]).number_format = '0.00"%"'
-            ws.cell(row=r, column=14, value=row["std"]).number_format = '0.000'
-            ws.cell(row=r, column=15, value=row["stat_days"]).number_format = '#,##0'
+            ws.cell(row=r, column=14, value=row["div_yield"]).number_format = '0.00"%"'
+            ws.cell(row=r, column=15, value=row["div_per_share"]).number_format = '#,##0.00'
+            ws.cell(row=r, column=16, value=row["div_at_2s"]).number_format = '0.00"%"'
+            for ci, pct in enumerate([3, 4, 5, 6], start=17):
+                val = row.get(f"price_at_{pct}pct", 0)
+                ws.cell(row=r, column=ci, value=val if val > 0 else "").number_format = '#,##0.0'
+            ws.cell(row=r, column=21, value=row["std"]).number_format = '0.000'
+            ws.cell(row=r, column=22, value=row["stat_days"]).number_format = '#,##0'
 
             zone_cell = ws.cell(row=r, column=2)
             z = row["zone"]
@@ -449,7 +514,7 @@ def main():
         for i, w in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
-        ws.auto_filter.ref = f"A1:O{len(mdf)+1}"
+        ws.auto_filter.ref = f"A1:V{len(mdf)+1}"
 
     # --- シート5: BUY候補 (dist_to_2s <= 3%) ---
     ws_buy = wb.create_sheet(title="BUY Candidates")
@@ -476,8 +541,18 @@ def main():
         ws_buy.cell(row=r, column=11, value=row["price_at_2s"]).number_format = '#,##0.0'
         ws_buy.cell(row=r, column=12, value=row["price_at_3s"]).number_format = '#,##0.0'
         ws_buy.cell(row=r, column=13, value=row["dist_to_2s"]).number_format = '0.00"%"'
-        ws_buy.cell(row=r, column=14, value=row["std"]).number_format = '0.000'
-        ws_buy.cell(row=r, column=15, value=row["stat_days"]).number_format = '#,##0'
+        ws_buy.cell(row=r, column=14, value=row["div_yield"]).number_format = '0.00"%"'
+        ws_buy.cell(row=r, column=15, value=row["div_per_share"]).number_format = '#,##0.00'
+        ws_buy.cell(row=r, column=16, value=row["div_at_2s"]).number_format = '0.00"%"'
+        for ci, pct in enumerate([3, 4, 5, 6], start=17):
+            val = row.get(f"price_at_{pct}pct", 0)
+            target_cell = ws_buy.cell(row=r, column=ci, value=val if val > 0 else "")
+            target_cell.number_format = '#,##0.0'
+            if val > 0 and row["price"] <= val:
+                target_cell.font = Font(bold=True, color="008000", name="Arial")
+                target_cell.fill = PatternFill("solid", fgColor="E8F5E9")
+        ws_buy.cell(row=r, column=21, value=row["std"]).number_format = '0.000'
+        ws_buy.cell(row=r, column=22, value=row["stat_days"]).number_format = '#,##0'
         z = row["zone"]
         if z in zone_fills:
             ws_buy.cell(row=r, column=2).fill = zone_fills[z]
@@ -490,6 +565,11 @@ def main():
     xlsx_path = os.path.join(OUTPUT_DIR, f"stock_deviation_{today}.xlsx")
     wb.save(xlsx_path)
     print(f"  Saved: {xlsx_path}")
+
+    # ========== CSV出力（Webダッシュボード用） ==========
+    csv_path = os.path.join(OUTPUT_DIR, f"stock_deviation_{today}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"  Saved: {csv_path}")
 
     # ========== PNG: ゾーン分布サマリー ==========
     print("  Generating PNG summary...")
