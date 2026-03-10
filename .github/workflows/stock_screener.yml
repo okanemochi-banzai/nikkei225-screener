@@ -1,10 +1,9 @@
 name: Stock Deviation Screener
 
 on:
-  # 毎営業日 16:30 JST = 07:30 UTC（東京市場クローズ後、少し余裕を持たせる）
+  # 毎営業日 16:30 JST = 07:30 UTC
   schedule:
     - cron: '30 7 * * 1-5'
-  # 手動実行
   workflow_dispatch:
 
 jobs:
@@ -13,6 +12,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+      pages: write
+      id-token: write
 
     steps:
       - name: Checkout
@@ -37,6 +38,10 @@ jobs:
           mkdir -p output
           OUTPUT_DIR=output python stock_deviation_screener.py
 
+      - name: Generate web dashboard
+        run: |
+          OUTPUT_DIR=output python generate_web_dashboard.py
+
       - name: Upload Excel as artifact
         uses: actions/upload-artifact@v4
         with:
@@ -51,3 +56,10 @@ jobs:
           git add output/
           git diff --cached --quiet || git commit -m "📊 Stock screener $(date +%Y-%m-%d)"
           git push
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./output/docs
+          publish_branch: gh-pages
