@@ -45,7 +45,7 @@ def generate_html(df, today):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ideal Deviation Dashboard</title>
+<title>理想乖離ダッシュボード</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+JP:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -290,11 +290,11 @@ def generate_html(df, today):
 <div class="glow-top"></div>
 
 <header>
-  <h1>IDEAL DEVIATION DASHBOARD</h1>
+  <h1>理想乖離ダッシュボード</h1>
   <div class="meta">
-    <span><span class="pulse"></span> Updated: {today}</span>
-    <span>Nikkei225 + Dow30 + NASDAQ100</span>
-    <span>{len(df)} stocks tracked</span>
+    <span><span class="pulse"></span> 更新日: {today}</span>
+    <span>日経225 + ダウ30 + NASDAQ100</span>
+    <span>全{len(df)}銘柄</span>
   </div>
 </header>
 
@@ -304,40 +304,41 @@ def generate_html(df, today):
   <div class="stats-row" style="margin-top:1.5rem;">
     <div class="stat-card">
       <div class="num" style="color:var(--red)">{len(df[df['zone']=='STRONG BUY'])}</div>
-      <div class="lbl">Strong Buy</div>
+      <div class="lbl">強い買い (-3σ)</div>
     </div>
     <div class="stat-card">
       <div class="num" style="color:var(--orange)">{len(df[df['zone']=='BUY ZONE'])}</div>
-      <div class="lbl">Buy Zone</div>
+      <div class="lbl">買いゾーン (-2σ)</div>
     </div>
     <div class="stat-card">
       <div class="num" style="color:var(--yellow)">{len(df[df['dist_to_2s']<=3.0])}</div>
-      <div class="lbl">Within 3% of -2σ</div>
+      <div class="lbl">-2σまで3%以内</div>
     </div>
     <div class="stat-card">
       <div class="num" style="color:var(--green)">{len(df[df['zone']=='NEUTRAL'])}</div>
-      <div class="lbl">Neutral</div>
+      <div class="lbl">平常圏</div>
     </div>
     <div class="stat-card">
       <div class="num" style="color:var(--purple)">{len(df[df['zone'].isin(['OVERBOUGHT','EXTREME HIGH'])])}</div>
-      <div class="lbl">Overbought</div>
+      <div class="lbl">過熱圏</div>
     </div>
   </div>
 
   <!-- Zone Distribution -->
-  <div class="section-title"><span class="dot" style="background:var(--accent)"></span> Zone Distribution</div>
+  <div class="section-title"><span class="dot" style="background:var(--accent)"></span> ゾーン分布</div>
   <div class="zone-grid">
     {"".join(_zone_card_html(m, markets[m]) for m in ["Nikkei225", "Dow30", "NASDAQ100"])}
   </div>
 
   <!-- Top 30 Buy Candidates -->
-  <div class="section-title"><span class="dot" style="background:var(--red)"></span> Top 30 — Closest to Buy Zone</div>
+  <div class="section-title"><span class="dot" style="background:var(--red)"></span> 買い場に近い銘柄 Top30</div>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>#</th><th>Zone</th><th>Ticker</th><th>Name</th><th>Market</th>
-        <th>Price</th><th>Dev%</th><th>-2σ%</th><th>-3σ%</th>
-        <th>Buy@-2σ</th><th>Dist to -2σ</th><th>Div%</th><th>Div@-2σ</th>
+        <th>#</th><th>ゾーン</th><th>コード</th><th>銘柄名</th><th>市場</th>
+        <th>株価</th><th>乖離率</th><th>-2σ</th><th>-3σ</th>
+        <th>-2σ株価</th><th>-2σまで</th><th>配当利回り</th><th>配当@-2σ</th>
+        <th>配当3%</th><th>配当4%</th><th>配当5%</th><th>配当6%</th>
       </tr></thead>
       <tbody>
         {"".join(_row_html(i+1, r) for i, r in enumerate(top30))}
@@ -347,17 +348,17 @@ def generate_html(df, today):
 
   <!-- Full Data by Market -->
   <div class="section-title" style="margin-top:2.5rem;">
-    <span class="dot" style="background:var(--green)"></span> Full Data
+    <span class="dot" style="background:var(--green)"></span> 全銘柄データ
   </div>
 
   <div class="search-box">
-    <input type="text" id="searchInput" placeholder="Search ticker or name..." oninput="filterTable()">
+    <input type="text" id="searchInput" placeholder="コード・銘柄名で検索..." oninput="filterTable()">
   </div>
 
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('all')">ALL ({len(df)})</button>
-    <button class="tab-btn" onclick="switchTab('nikkei')">Nikkei225 ({markets['Nikkei225']['total']})</button>
-    <button class="tab-btn" onclick="switchTab('dow')">Dow30 ({markets['Dow30']['total']})</button>
+    <button class="tab-btn active" onclick="switchTab('all')">全銘柄 ({len(df)})</button>
+    <button class="tab-btn" onclick="switchTab('nikkei')">日経225 ({markets['Nikkei225']['total']})</button>
+    <button class="tab-btn" onclick="switchTab('dow')">ダウ30 ({markets['Dow30']['total']})</button>
     <button class="tab-btn" onclick="switchTab('nasdaq')">NASDAQ100 ({markets['NASDAQ100']['total']})</button>
   </div>
 
@@ -377,8 +378,8 @@ def generate_html(df, today):
 </div>
 
 <footer>
-  Ideal Deviation Dashboard &middot; Auto-updated via GitHub Actions<br>
-  Data: Yahoo Finance &middot; Not financial advice
+  理想乖離ダッシュボード &middot; GitHub Actionsで自動更新<br>
+  データ: Yahoo Finance &middot; 投資判断は自己責任で行ってください
 </footer>
 
 <script>
@@ -414,25 +415,27 @@ window.addEventListener('load', () => {{
 def _zone_card_html(market, data):
     total = data["total"]
     zones_config = [
-        ("STRONG BUY", "bar-strong", "z-strong"),
-        ("BUY ZONE", "bar-buy", "z-buy"),
-        ("MILD DIP", "bar-mild", "z-mild"),
-        ("NEUTRAL", "bar-neutral", "z-neutral"),
-        ("OVERBOUGHT", "bar-over", "z-over"),
-        ("EXTREME HIGH", "bar-extreme", "z-extreme"),
+        ("STRONG BUY", "bar-strong", "z-strong", "強い買い"),
+        ("BUY ZONE", "bar-buy", "z-buy", "買いゾーン"),
+        ("MILD DIP", "bar-mild", "z-mild", "軽い押し目"),
+        ("NEUTRAL", "bar-neutral", "z-neutral", "平常圏"),
+        ("OVERBOUGHT", "bar-over", "z-over", "過熱"),
+        ("EXTREME HIGH", "bar-extreme", "z-extreme", "極端な高値"),
     ]
     bars = ""
-    for zname, bar_cls, _ in zones_config:
+    for zname, bar_cls, _, jp_name in zones_config:
         cnt = data["zones"].get(zname, 0)
         pct = (cnt / total * 100) if total > 0 else 0
         display_w = max(pct, 2) if cnt > 0 else 0
         bars += f"""<div class="zone-bar">
-          <span class="label">{zname}</span>
+          <span class="label">{jp_name}</span>
           <div class="bar-bg"><div class="bar-fill {bar_cls}" data-width="{display_w}" style="width:0%">{cnt if cnt>0 else ''}</div></div>
         </div>"""
 
+    _market_jp = {"Nikkei225": "日経225", "Dow30": "ダウ30", "NASDAQ100": "NASDAQ100"}
+    market_label = _market_jp.get(market, market)
     return f"""<div class="zone-card">
-      <div class="market-name">{market} ({total})</div>
+      <div class="market-name">{market_label} ({total}銘柄)</div>
       <div class="zone-bars">{bars}</div>
     </div>"""
 
@@ -442,7 +445,11 @@ def _zone_badge(zone):
         "STRONG BUY": "z-strong", "BUY ZONE": "z-buy", "MILD DIP": "z-mild",
         "NEUTRAL": "z-neutral", "OVERBOUGHT": "z-over", "EXTREME HIGH": "z-extreme",
     }
-    return f'<span class="zone-badge {cls_map.get(zone, "")}">{zone}</span>'
+    jp_map = {
+        "STRONG BUY": "強い買い", "BUY ZONE": "買いゾーン", "MILD DIP": "軽い押し目",
+        "NEUTRAL": "平常圏", "OVERBOUGHT": "過熱", "EXTREME HIGH": "極端な高値",
+    }
+    return f'<span class="zone-badge {cls_map.get(zone, "")}">{jp_map.get(zone, zone)}</span>'
 
 
 def _row_html(rank, r):
@@ -450,17 +457,29 @@ def _row_html(rank, r):
     dist_cls = "neg hot" if r["dist_to_2s"] <= 0 else ("hot" if r["dist_to_2s"] <= 3 else "")
     div_val = r.get("div_yield", 0) or 0
     div2s_val = r.get("div_at_2s", 0) or 0
-    # 日本株4%、米国株6%以上で緑ハイライト
     div_threshold = 4.0 if r.get("market") == "Nikkei225" else 6.0
-    div_cls = "pos" if div_val >= div_threshold else ("" if div_val > 0 else "")
+    div_cls = "pos" if div_val >= div_threshold else ""
     div2s_cls = "pos" if div2s_val >= div_threshold else ""
+
+    # 配当利回りキリ番到達株価
+    price = r.get("price", 0) or 0
+    yield_cells = ""
+    for pct in [3, 4, 5, 6]:
+        val = r.get(f"price_at_{pct}pct", 0) or 0
+        if val > 0:
+            # 現在株価がターゲット以下なら緑ハイライト
+            cls = "pos" if price <= val else ""
+            yield_cells += f'<td class="{cls}">{val:,.0f}</td>'
+        else:
+            yield_cells += '<td style="color:var(--text-dim)">—</td>'
+
     return f"""<tr>
       <td>{rank}</td>
       <td>{_zone_badge(r['zone'])}</td>
       <td><strong>{r['ticker']}</strong></td>
       <td>{r['name']}</td>
       <td>{r['market']}</td>
-      <td>{r['price']:,.2f}</td>
+      <td>{price:,.2f}</td>
       <td class="{dev_cls}">{r['deviation']:+.2f}%</td>
       <td>{r['sigma2_lower']:+.2f}%</td>
       <td>{r['sigma3_lower']:+.2f}%</td>
@@ -468,6 +487,7 @@ def _row_html(rank, r):
       <td class="{dist_cls}">{r['dist_to_2s']:+.1f}%</td>
       <td class="{div_cls}">{div_val:.2f}%</td>
       <td class="{div2s_cls}">{div2s_val:.2f}%</td>
+      {yield_cells}
     </tr>"""
 
 
@@ -478,9 +498,10 @@ def _full_table_html(records, table_id):
     return f"""<div class="table-wrap">
       <table id="{table_id}">
         <thead><tr>
-          <th>#</th><th>Zone</th><th>Ticker</th><th>Name</th><th>Market</th>
-          <th>Price</th><th>Dev%</th><th>-2σ%</th><th>-3σ%</th>
-          <th>Buy@-2σ</th><th>Dist to -2σ</th><th>Div%</th><th>Div@-2σ</th>
+          <th>#</th><th>ゾーン</th><th>コード</th><th>銘柄名</th><th>市場</th>
+          <th>株価</th><th>乖離率</th><th>-2σ</th><th>-3σ</th>
+          <th>-2σ株価</th><th>-2σまで</th><th>配当利回り</th><th>配当@-2σ</th>
+          <th>配当3%</th><th>配当4%</th><th>配当5%</th><th>配当6%</th>
         </tr></thead>
         <tbody>{rows}</tbody>
       </table>
@@ -501,12 +522,15 @@ def main():
         df = pd.read_excel(xlsx_files[-1], sheet_name="All Stocks")
         # Excelのヘッダー名をCSV名にマッピング
         col_map = {
-            "Rank": "rank", "Zone": "zone", "Ticker": "ticker", "Name": "name",
-            "Market": "market", "Price": "price", "SMA25": "sma25",
-            "Dev%": "deviation", "-2σ%": "sigma2_lower", "-3σ%": "sigma3_lower",
-            "Buy@-2σ": "price_at_2s", "Buy@-3σ": "price_at_3s",
-            "Dist to -2σ%": "dist_to_2s", "Div%": "div_yield", "Div@-2σ%": "div_at_2s",
-            "StdDev": "std", "StatDays": "stat_days",
+            "順位": "rank", "ゾーン": "zone", "コード": "ticker", "銘柄名": "name",
+            "市場": "market", "株価": "price", "25日MA": "sma25",
+            "乖離率%": "deviation", "-2σ%": "sigma2_lower", "-3σ%": "sigma3_lower",
+            "-2σ株価": "price_at_2s", "-3σ株価": "price_at_3s",
+            "-2σまで%": "dist_to_2s", "配当利回り%": "div_yield", "1株配当": "div_per_share",
+            "配当@-2σ%": "div_at_2s",
+            "配当3%株価": "price_at_3pct", "配当4%株価": "price_at_4pct",
+            "配当5%株価": "price_at_5pct", "配当6%株価": "price_at_6pct",
+            "標準偏差": "std", "統計日数": "stat_days",
         }
         df.rename(columns=col_map, inplace=True)
     else:
@@ -518,6 +542,10 @@ def main():
         df["div_yield"] = 0.0
     if "div_at_2s" not in df.columns:
         df["div_at_2s"] = 0.0
+    for pct in [3, 4, 5, 6]:
+        col = f"price_at_{pct}pct"
+        if col not in df.columns:
+            df[col] = 0.0
     df["div_yield"] = df["div_yield"].fillna(0.0)
     df["div_at_2s"] = df["div_at_2s"].fillna(0.0)
 
