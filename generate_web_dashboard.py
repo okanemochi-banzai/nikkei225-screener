@@ -33,20 +33,23 @@ def _top5_cards(df):
         div_val = r.get("div_yield", 0) or 0
         dev = r.get("deviation", 0)
         dist = r.get("dist_to_2s", 0)
+        consec = r.get("div_consec_years", 0) or 0
         market = MARKET_JP.get(r.get("market", ""), r.get("market", ""))
 
-        if score >= 70:
+        if dist <= 0:
             ring = "ring-hot"
-        elif score >= 50:
+        elif dist <= 5:
             ring = "ring-warm"
         else:
             ring = "ring-ok"
 
         rank_label = ["①", "②", "③", "④", "⑤"][i]
+        # リングには-2σまでの距離を表示
+        ring_text = f"{dist:+.0f}%"
 
         cards += f"""<div class="top-card">
           <div class="top-rank">{rank_label}</div>
-          <div class="top-score-ring {ring}"><span>{score}</span></div>
+          <div class="top-score-ring {ring}"><span>{ring_text}</span></div>
           <div class="top-info">
             <div class="top-ticker">{r['ticker']}</div>
             <div class="top-name">{r['name']}</div>
@@ -58,15 +61,16 @@ def _top5_cards(df):
               <span class="top-lbl">乖離率</span>
             </div>
             <div class="top-metric">
-              <span class="top-val {'hot' if dist <= 3 else ''}">{dist:+.1f}%</span>
-              <span class="top-lbl">-2σまで</span>
-            </div>
-            <div class="top-metric">
               <span class="top-val {'pos' if div_val >= 3 else ''}">{div_val:.1f}%</span>
               <span class="top-lbl">配当</span>
             </div>
+            <div class="top-metric">
+              <span class="top-val {'pos' if consec >= 5 else ''}">{consec if consec > 0 else '—'}</span>
+              <span class="top-lbl">連続増配</span>
+            </div>
           </div>
           <div class="top-zone"><span class="zone-badge {ZONE_CLS.get(zone, '')}">{ZONE_JP.get(zone, zone)}</span></div>
+          <div class="top-signals">{_signals_html(r)}</div>
         </div>"""
     return cards
 
@@ -81,6 +85,7 @@ def _row(rank, r):
     market = r.get("market", "")
     price = r.get("price", 0) or 0
     div_thr = 4.0 if market == "Nikkei225" else 6.0
+    consec = r.get("div_consec_years", 0) or 0
 
     # 行クラス
     rc = ""
@@ -93,35 +98,46 @@ def _row(rank, r):
     elif score >= 50:
         rc = "row-warm"
 
-    # スコア色
-    sc = "s-h" if score >= 70 else ("s-m" if score >= 50 else ("s-l" if score >= 30 else "s-n"))
-
     return f"""<tr class="{rc}" data-score="{score}" data-dist="{dist}" data-div="{div_val}" data-dev="{dev}">
       <td>{rank}</td>
-      <td><div class="sc {sc}"><b>{score}</b><div class="sf" style="width:{score}%"></div></div></td>
+      <td class="sig-cell">{_signals_html(r)}</td>
       <td><span class="zone-badge {ZONE_CLS.get(zone,'')}">{ZONE_JP.get(zone,zone)}</span></td>
       <td><b>{r['ticker']}</b></td>
       <td>{r['name']}</td>
-      <td class="hide-m">{MARKET_JP.get(market, market)}</td>
+      <td class="hide-m">{r.get('sector','')[:12]}</td>
       <td>{price:,.0f}</td>
       <td class="{'neg' if dev<0 else 'pos'}">{dev:+.1f}%</td>
       <td class="{'neg hot' if dist<=0 else ('hot' if dist<=3 else '')}">{dist:+.1f}%</td>
       <td class="{'pos' if div_val>=div_thr else ''}">{div_val:.1f}%</td>
-      <td class="hide-m {'pos' if div2s>=div_thr else ''}">{div2s:.1f}%</td>
+      <td class="{'pos' if consec>=5 else ''}">{consec if consec>0 else '—'}</td>
+      <td class="hide-m">{r.get('drop_from_ath',0):.0f}%</td>
     </tr>"""
+
+
+def _signals_html(r):
+    """シグナルをタグ表示"""
+    tags = []
+    if r.get("flag_high_div"): tags.append('<span class="sig sig-div">高配当</span>')
+    if r.get("half_from_ath"): tags.append('<span class="sig sig-half">半値</span>')
+    if r.get("cross_above_25ma"): tags.append('<span class="sig sig-ma">日足25MA上抜け</span>')
+    if r.get("monthly_bullish"): tags.append('<span class="sig sig-bull">月足陽転</span>')
+    if r.get("method12"): tags.append('<span class="sig sig-gc">月足GC</span>')
+    if r.get("sector_sole_dip"): tags.append('<span class="sig sig-sec">セクター唯一安</span>')
+    return "".join(tags) if tags else '<span class="dim">—</span>'
 
 
 def _table(records, tid):
     rows = "".join(_row(i+1, r) for i, r in enumerate(records))
     return f"""<div class="tw"><table id="{tid}"><thead><tr>
       <th>#</th>
-      <th class="sortable" data-sort="score">スコア ⇅</th>
+      <th>シグナル</th>
       <th>ゾーン</th><th>コード</th><th>銘柄名</th>
-      <th class="hide-m">市場</th><th>株価</th>
+      <th class="hide-m">セクター</th><th>株価</th>
       <th class="sortable" data-sort="dev">乖離率 ⇅</th>
       <th class="sortable" data-sort="dist">-2σまで ⇅</th>
       <th class="sortable" data-sort="div">配当 ⇅</th>
-      <th class="hide-m">配当@-2σ</th>
+      <th>連続増配</th>
+      <th class="hide-m">ATH下落</th>
     </tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
@@ -130,6 +146,7 @@ def generate_html(df, today):
     n_strong = len(df[df["zone"]=="STRONG BUY"])
     n_buy = len(df[df["zone"]=="BUY ZONE"])
     n_near = len(df[df["dist_to_2s"]<=3.0])
+    n_signals = len(df[df["n_signals"]>=1])
     n_over = len(df[df["zone"].isin(["OVERBOUGHT","EXTREME HIGH"])])
 
     # マーケット別
@@ -200,6 +217,7 @@ header h1{{font-family:'JetBrains Mono',monospace;font-size:1.4rem;font-weight:7
 .top-val{{display:block;font-family:'JetBrains Mono',monospace;font-size:0.8rem;font-weight:600}}
 .top-lbl{{display:block;font-size:0.55rem;color:var(--dim);margin-top:1px}}
 .top-zone{{margin-top:0.2rem}}
+.top-signals{{margin-top:0.3rem;display:flex;flex-wrap:wrap;justify-content:center;gap:2px}}
 
 /* Market Bars */
 .market-section{{margin-bottom:1.5rem}}
@@ -237,7 +255,17 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .z-over{{background:rgba(168,85,247,0.2);color:var(--prp)}}
 .z-extreme{{background:rgba(236,72,153,0.2);color:var(--pnk)}}
 
-.neg{{color:var(--red)}}.pos{{color:var(--grn)}}.hot{{color:var(--org);font-weight:700}}
+.neg{{color:var(--red)}}.pos{{color:var(--grn)}}.hot{{color:var(--org);font-weight:700}}.dim{{color:var(--dim)}}
+
+/* Signal Tags */
+.sig-cell{{white-space:normal;min-width:80px;max-width:180px}}
+.sig{{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.55rem;font-weight:700;margin:1px;letter-spacing:0.2px}}
+.sig-div{{background:rgba(34,197,94,0.2);color:var(--grn)}}
+.sig-half{{background:rgba(239,68,68,0.2);color:var(--red)}}
+.sig-ma{{background:rgba(56,189,248,0.2);color:var(--ac)}}
+.sig-bull{{background:rgba(234,179,8,0.2);color:var(--ylw)}}
+.sig-gc{{background:rgba(249,115,22,0.2);color:var(--org)}}
+.sig-sec{{background:rgba(168,85,247,0.2);color:var(--prp)}}
 
 .sc{{position:relative;width:46px;height:20px;background:var(--s2);border-radius:3px;overflow:hidden;display:inline-flex;align-items:center;justify-content:center}}
 .sc b{{position:relative;z-index:2;font-size:0.65rem;font-family:'JetBrains Mono',monospace}}
@@ -252,6 +280,12 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .row-warm td{{background:rgba(234,179,8,0.03)!important}}
 
 footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font-family:'JetBrains Mono',monospace;border-top:1px solid var(--bd);margin-top:2rem}}
+
+/* Legend */
+.legend{{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:1rem 1.2rem;margin-bottom:1.5rem}}
+.legend-title{{font-family:'JetBrains Mono',monospace;font-size:0.75rem;font-weight:700;color:var(--ac);margin-bottom:0.6rem}}
+.legend-items{{display:flex;flex-wrap:wrap;gap:0.5rem 1.5rem}}
+.legend-item{{font-size:0.7rem;color:var(--dim);display:flex;align-items:center;gap:0.4rem}}
 
 @media(max-width:900px){{
   .top5{{grid-template-columns:repeat(2,1fr)}}
@@ -289,6 +323,7 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
     <div class="st"><div class="n" style="color:var(--red)">{n_strong}</div><div class="l">強い買い</div></div>
     <div class="st"><div class="n" style="color:var(--org)">{n_buy}</div><div class="l">買いゾーン</div></div>
     <div class="st"><div class="n" style="color:var(--ylw)">{n_near}</div><div class="l">-2σ 3%以内</div></div>
+    <div class="st"><div class="n" style="color:var(--ac)">{n_signals}</div><div class="l">シグナル点灯</div></div>
     <div class="st"><div class="n" style="color:var(--prp)">{n_over}</div><div class="l">過熱圏</div></div>
   </div>
 
@@ -300,6 +335,18 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
   <div class="sec"><span class="dot" style="background:var(--ac)"></span> ゾーン分布</div>
   <div class="market-section">
     {market_bars}
+  </div>
+
+  <div class="legend">
+    <div class="legend-title">シグナル説明</div>
+    <div class="legend-items">
+      <div class="legend-item"><span class="sig sig-div">高配当</span>日本株4%超・米国株6%超</div>
+      <div class="legend-item"><span class="sig sig-half">半値</span>過去最高値から50%以上下落</div>
+      <div class="legend-item"><span class="sig sig-ma">日足25MA上抜け</span>日足終値が25日移動平均線を上抜け</div>
+      <div class="legend-item"><span class="sig sig-bull">月足陽転</span>前2ヶ月陰線→直近月が陽線に転換</div>
+      <div class="legend-item"><span class="sig sig-gc">月足GC</span>月足9MA(短期)が24MA(中期)をゴールデンクロス</div>
+      <div class="legend-item"><span class="sig sig-sec">セクター唯一安</span>同セクター内で唯一のマイナス乖離銘柄</div>
+    </div>
   </div>
 
   <div class="sec2">
@@ -386,7 +433,12 @@ def main():
         print("  [ERROR] No data files found")
         return
 
-    for col, default in [("div_yield",0.0),("div_at_2s",0.0),("buy_score",0)]:
+    for col, default in [("div_yield",0.0),("div_at_2s",0.0),("buy_score",0),
+                         ("n_signals",0),("signals","—"),("sector",""),
+                         ("drop_from_ath",0.0),("half_from_ath",False),
+                         ("cross_above_25ma",False),("monthly_bullish",False),
+                         ("method12",False),("flag_high_div",False),("sector_sole_dip",False),
+                         ("div_consec_years",0)]:
         if col not in df.columns:
             df[col] = default
         df[col] = df[col].fillna(default)
