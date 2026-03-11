@@ -21,8 +21,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
-import requests
-from bs4 import BeautifulSoup
 import re
 import time
 import os
@@ -255,86 +253,29 @@ def get_zone(dev, s2l, s3l, s2u, s3u):
     else: return "EXTREME HIGH"
 
 
-# ─── Yahooファイナンス日本版から配当データ取得 ────────────
-_YJ_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
-_div_cache = {}  # キャッシュ
+# ─── 日本株配当データ（CSVから読み込み） ──────────────
+_jp_div_data = {}
 
-
-def get_jp_dividend_from_yahoo(ticker_str):
-    """
-    Yahooファイナンス日本版から日本株の配当利回り・1株配当を取得。
-    ticker_str: '2501.T' のような形式
-    Returns: (div_per_share: float, div_yield_pct: float)
-    """
-    if ticker_str in _div_cache:
-        return _div_cache[ticker_str]
-
-    code = ticker_str.replace(".T", "")
-    url = f"https://finance.yahoo.co.jp/quote/{code}.T"
-
-    try:
-        resp = requests.get(url, headers=_YJ_HEADERS, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-        text = soup.get_text()
-
-        # 配当利回り（実績）を探す
-        div_yield = 0.0
-        div_per_share = 0.0
-
-        # パターン1: "配当利回り（実績）" or "配当利回り（予想）" 付近の数値
-        # Yahooファイナンス日本版のHTMLは構造が変わることがあるので複数パターン対応
-        patterns_yield = [
-            r'配当利回り[（(](?:実績|予想)[)）]\s*(\d+\.?\d*)%',
-            r'配当利回り.*?(\d+\.?\d*)\s*%',
-        ]
-        for pat in patterns_yield:
-            m = re.search(pat, text)
-            if m:
-                val = float(m.group(1))
-                if 0.1 <= val <= 15:
-                    div_yield = val
-                    break
-
-        # パターン2: "1株配当（実績）" or "1株配当（予想）" 付近の数値
-        patterns_dps = [
-            r'1株配当[（(](?:実績|予想)[)）]\s*([\d,]+\.?\d*)\s*円',
-            r'1株配当[（(](?:実績|予想)[)）]\s*([\d,]+\.?\d*)',
-            r'1株配当.*?([\d,]+\.?\d*)\s*円',
-        ]
-        for pat in patterns_dps:
-            m = re.search(pat, text)
-            if m:
-                val = float(m.group(1).replace(",", ""))
-                if val > 0:
-                    div_per_share = val
-                    break
-
-        # HTML属性ベースでも探す（Yahoo Japan は data属性にも値を持つことがある）
-        if div_yield == 0 and div_per_share == 0:
-            # spanタグ内テキストを探索
-            for span in soup.find_all("span"):
-                txt = span.get_text(strip=True)
-                # "X.XX%" パターンで配当利回り候補
-                m = re.match(r'^(\d+\.\d{1,2})%$', txt)
-                if m:
-                    val = float(m.group(1))
-                    if 0.5 <= val <= 12:
-                        # この近くに「配当」の文字があるか確認
-                        parent = span.parent
-                        if parent and "配当" in parent.get_text():
-                            div_yield = val
-                            break
-
-        result = (div_per_share, div_yield)
-        _div_cache[ticker_str] = result
-        return result
-
-    except Exception as e:
-        _div_cache[ticker_str] = (0.0, 0.0)
-        return (0.0, 0.0)
+def load_jp_dividends():
+    """リポジトリ内の jp_dividends.csv から日本株の1株配当を読み込む"""
+    global _jp_div_data
+    csv_paths = [
+        os.path.join(os.path.dirname(__file__), "jp_dividends.csv"),
+        "jp_dividends.csv",
+    ]
+    for path in csv_paths:
+        if os.path.exists(path):
+            try:
+                df_div = pd.read_csv(path, dtype={"ticker": str})
+                for _, row in df_div.iterrows():
+                    t = str(row["ticker"]).strip()
+                    d = float(row.get("div_per_share", 0) or 0)
+                    _jp_div_data[t] = d
+                print(f"  Loaded jp_dividends.csv: {len(_jp_div_data)} stocks")
+                return
+            except Exception as e:
+                print(f"  [WARN] Failed to load {path}: {e}")
+    print("  [WARN] jp_dividends.csv not found. JP dividend data will be 0.")
 
 
 def calc_deviation(ticker_str, name, market):
@@ -350,7 +291,6 @@ def calc_deviation(ticker_str, name, market):
         # 米国株: yfinanceの配当履歴 + API値
         div_consec_years = 0
         div_per_share = 0.0
-        div_yield_direct = 0.0  # Yahoo Japanから直接取得した利回り
         divs = pd.Series(dtype=float)
         is_jp = ticker_str.endswith(".T")
 
@@ -358,12 +298,10 @@ def calc_deviation(ticker_str, name, market):
             info = ticker.info
 
             if is_jp:
-                # ===== 日本株: Yahooファイナンス日本版から取得 =====
-                yj_dps, yj_yield = get_jp_dividend_from_yahoo(ticker_str)
-                div_per_share = yj_dps
-                div_yield_direct = yj_yield  # 株価計算不要の利回り
+                # ===== 日本株: CSVから1株配当を取得 =====
+                div_per_share = _jp_div_data.get(ticker_str, 0.0)
 
-                # 連続増配はyfinanceの配当履歴から計算（こちらは履歴なので比較的正確）
+                # 連続増配はyfinanceの配当履歴から計算
                 try:
                     divs = ticker.dividends
                 except:
@@ -420,7 +358,7 @@ def calc_deviation(ticker_str, name, market):
                 except:
                     pass
 
-            div_yield = 0.0  # 株価取得後に計算（日本株はdiv_yield_directを使う）
+            div_yield = 0.0  # 株価取得後に計算
         except:
             div_yield = 0.0
             div_per_share = 0.0
@@ -450,15 +388,8 @@ def calc_deviation(ticker_str, name, market):
         price_3s = cur_sma * (1 + s3l / 100)
         dist_2s = ((cur_price / price_2s) - 1) * 100
 
-        # 配当利回り計算
-        if is_jp and div_yield_direct > 0:
-            # 日本株: Yahooファイナンス日本版の値をそのまま使用（最も正確）
-            div_yield = div_yield_direct
-            # div_per_shareが取れていない場合、利回りから逆算
-            if not div_per_share and cur_price > 0:
-                div_per_share = round(cur_price * div_yield / 100, 1)
-        elif div_per_share and cur_price > 0:
-            # 米国株 or Yahoo Japanから利回りが取れなかった場合: 自前計算
+        # 配当利回り計算（1株配当 ÷ 現在株価）
+        if div_per_share and cur_price > 0:
             div_yield = round(div_per_share / cur_price * 100, 2)
             if div_yield > 15:
                 div_yield = 0.0
@@ -669,6 +600,9 @@ def main():
     print(f"  Individual Stock Ideal Deviation Screener — {today}")
     print("=" * 70)
 
+    # 日本株配当データを読み込み
+    load_jp_dividends()
+
     # 全銘柄リスト作成
     all_stocks = []
     seen_tickers = set()
@@ -703,8 +637,6 @@ def main():
         else:
             errors.append(ticker)
         # rate limit対策
-        if ticker.endswith(".T"):
-            time.sleep(0.5)  # Yahoo Japan スクレイピング間隔
         if (i + 1) % 50 == 0:
             time.sleep(2)
 
