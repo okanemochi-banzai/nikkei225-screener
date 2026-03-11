@@ -21,7 +21,7 @@ ZONE_CLS = {
     "STRONG BUY": "z-strong", "BUY ZONE": "z-buy", "MILD DIP": "z-mild",
     "NEUTRAL": "z-neutral", "OVERBOUGHT": "z-over", "EXTREME HIGH": "z-extreme",
 }
-MARKET_JP = {"Nikkei225": "日経225", "Dow30": "ダウ30", "NASDAQ100": "NASDAQ100"}
+MARKET_JP = {"Nikkei225": "日経225", "Dow30": "ダウ30", "NASDAQ100": "NASDAQ100", "配当貴族": "配当貴族"}
 
 
 def _top5_cards(df):
@@ -153,9 +153,11 @@ def generate_html(df, today):
     zone_order = ["STRONG BUY","BUY ZONE","MILD DIP","NEUTRAL","OVERBOUGHT","EXTREME HIGH"]
     zone_colors = ["#ef4444","#f97316","#eab308","#22c55e","#a855f7","#ec4899"]
     market_bars = ""
-    for m in ["Nikkei225","Dow30","NASDAQ100"]:
+    for m in ["Nikkei225","Dow30","NASDAQ100","配当貴族"]:
         mdf = df[df["market"]==m]
         total = len(mdf)
+        if total == 0:
+            continue
         bars = ""
         for z, col in zip(zone_order, zone_colors):
             cnt = len(mdf[mdf["zone"]==z])
@@ -166,7 +168,7 @@ def generate_html(df, today):
 
     # タブデータ
     all_data = {}
-    for m in ["Nikkei225","Dow30","NASDAQ100"]:
+    for m in ["Nikkei225","Dow30","NASDAQ100","配当貴族"]:
         all_data[m] = df[df["market"]==m].to_dict("records")
 
     return f"""<!DOCTYPE html>
@@ -358,6 +360,7 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
         <button class="tb" onclick="switchTab('n225',this)">日経 ({len(all_data['Nikkei225'])})</button>
         <button class="tb" onclick="switchTab('dow',this)">ダウ ({len(all_data['Dow30'])})</button>
         <button class="tb" onclick="switchTab('ndq',this)">NASDAQ ({len(all_data['NASDAQ100'])})</button>
+        <button class="tb" onclick="switchTab('arst',this)">配当貴族 ({len(all_data.get('配当貴族',[]))})</button>
       </div>
     </div>
   </div>
@@ -366,6 +369,7 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
   <div id="tab-n225" class="tp">{_table(all_data['Nikkei225'], 'tbl-n225')}</div>
   <div id="tab-dow" class="tp">{_table(all_data['Dow30'], 'tbl-dow')}</div>
   <div id="tab-ndq" class="tp">{_table(all_data['NASDAQ100'], 'tbl-ndq')}</div>
+  <div id="tab-arst" class="tp">{_table(all_data.get('配当貴族',[]), 'tbl-arst')}</div>
 
 </div>
 
