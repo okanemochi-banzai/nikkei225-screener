@@ -231,35 +231,62 @@ def calc_deviation(ticker_str, name, market):
         if df.empty or len(df) < SMA_PERIOD + 100:
             return None
 
-        # 配当情報取得（yfinanceのdividendYieldは日本株で異常値が多いため、
-        # dividendRate ÷ 株価 で自前計算する）
+        # 配当情報取得
+        # yfinanceは日本株で異常値を返すことが多いため、複数の方法で取得し妥当性を検証する
         div_consec_years = 0
+        div_per_share = 0.0
+        divs = pd.Series(dtype=float)
         try:
             info = ticker.info
-            div_per_share = info.get("dividendRate") or 0.0
 
-            # dividendRateがない場合、直近1年の配当履歴から計算
-            divs = pd.Series(dtype=float)
+            # 方法1: trailingAnnualDividendRate（最も信頼性が高い）
+            trailing_rate = info.get("trailingAnnualDividendRate") or 0.0
+
+            # 方法2: dividendRate
+            div_rate = info.get("dividendRate") or 0.0
+
+            # 方法3: 配当履歴から直近1年分を合算
+            hist_rate = 0.0
             try:
                 divs = ticker.dividends
-                if len(divs) > 0 and not div_per_share:
-                    one_year_ago = divs.index[-1] - pd.Timedelta(days=400)
+                if len(divs) > 0:
+                    # 直近の配当日から365日遡る（400日だと多すぎる場合がある）
+                    latest_div_date = divs.index[-1]
+                    one_year_ago = latest_div_date - pd.Timedelta(days=370)
                     recent_divs = divs[divs.index >= one_year_ago]
                     if len(recent_divs) > 0:
-                        div_per_share = float(recent_divs.sum())
+                        hist_rate = float(recent_divs.sum())
             except:
                 pass
 
-            # 連続増配年数の計算（年間配当を年ごとに合算し、前年より増えている連続年数）
+            # 暫定株価（後で正確な値に置き換え）
+            tmp_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+
+            # 各方法の利回りを計算して妥当なものを採用
+            candidates = []
+            for rate, label in [(trailing_rate, "trailing"), (div_rate, "rate"), (hist_rate, "hist")]:
+                if rate > 0 and tmp_price > 0:
+                    yld = rate / tmp_price * 100
+                    # 妥当性チェック: 0.1%〜15%の範囲内のみ採用
+                    if 0.1 <= yld <= 15:
+                        candidates.append((rate, yld, label))
+
+            if candidates:
+                # trailing > hist > rate の優先順
+                priority = {"trailing": 0, "hist": 1, "rate": 2}
+                candidates.sort(key=lambda x: priority.get(x[2], 9))
+                div_per_share = candidates[0][0]
+            else:
+                div_per_share = 0.0
+
+            # 連続増配年数の計算
             if len(divs) > 0:
                 try:
                     annual_divs = divs.groupby(divs.index.year).sum()
                     if len(annual_divs) >= 2:
-                        # 直近の不完全年は除外する可能性があるため、最新年を除外
                         current_year = datetime.now().year
                         if annual_divs.index[-1] == current_year and len(annual_divs) >= 3:
                             annual_divs = annual_divs.iloc[:-1]
-                        # 逆順にたどって連続増配をカウント
                         years_counted = 0
                         for i in range(len(annual_divs) - 1, 0, -1):
                             if annual_divs.iloc[i] > annual_divs.iloc[i-1]:
@@ -270,7 +297,7 @@ def calc_deviation(ticker_str, name, market):
                 except:
                     pass
 
-            div_yield = 0.0  # 株価取得後に計算
+            div_yield = 0.0  # 株価取得後に正確に計算
         except:
             div_yield = 0.0
             div_per_share = 0.0
@@ -300,15 +327,21 @@ def calc_deviation(ticker_str, name, market):
         price_3s = cur_sma * (1 + s3l / 100)
         dist_2s = ((cur_price / price_2s) - 1) * 100
 
-        # 配当利回りを自前計算（dividendRate ÷ 現在株価）
+        # 配当利回りを自前計算（div_per_share ÷ 現在株価）
         if div_per_share and cur_price > 0:
             div_yield = round(div_per_share / cur_price * 100, 2)
+            # 最終サニティチェック: 15%超は異常値とみなしてリセット
+            if div_yield > 15:
+                div_yield = 0.0
+                div_per_share = 0.0
         else:
             div_yield = 0.0
 
         # -2σ到達時の想定配当利回り
         if div_per_share and price_2s > 0:
             div_at_2s = round(div_per_share / price_2s * 100, 2)
+            if div_at_2s > 20:
+                div_at_2s = 0.0
         else:
             div_at_2s = 0.0
 
