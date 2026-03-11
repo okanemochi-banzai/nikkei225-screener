@@ -231,12 +231,25 @@ def calc_deviation(ticker_str, name, market):
         if df.empty or len(df) < SMA_PERIOD + 100:
             return None
 
-        # 配当情報取得
+        # 配当情報取得（yfinanceのdividendYieldは日本株で異常値が多いため、
+        # dividendRate ÷ 株価 で自前計算する）
         try:
             info = ticker.info
-            div_yield = info.get("dividendYield") or info.get("yield") or 0
-            div_yield = round(div_yield * 100, 2) if div_yield else 0.0
             div_per_share = info.get("dividendRate") or 0.0
+
+            # dividendRateがない場合、直近1年の配当履歴から計算
+            if not div_per_share:
+                try:
+                    divs = ticker.dividends
+                    if len(divs) > 0:
+                        one_year_ago = divs.index[-1] - pd.Timedelta(days=400)
+                        recent_divs = divs[divs.index >= one_year_ago]
+                        if len(recent_divs) > 0:
+                            div_per_share = float(recent_divs.sum())
+                except:
+                    pass
+
+            div_yield = 0.0  # 株価取得後に計算
         except:
             div_yield = 0.0
             div_per_share = 0.0
@@ -266,12 +279,17 @@ def calc_deviation(ticker_str, name, market):
         price_3s = cur_sma * (1 + s3l / 100)
         dist_2s = ((cur_price / price_2s) - 1) * 100
 
-        # -2σ到達時の想定配当利回り
-        div_at_2s = round(div_yield * (cur_price / price_2s), 2) if price_2s > 0 and div_yield > 0 else 0.0
+        # 配当利回りを自前計算（dividendRate ÷ 現在株価）
+        if div_per_share and cur_price > 0:
+            div_yield = round(div_per_share / cur_price * 100, 2)
+        else:
+            div_yield = 0.0
 
-        # 年間配当がない場合、利回りと現在株価から逆算
-        if not div_per_share and div_yield > 0:
-            div_per_share = cur_price * div_yield / 100
+        # -2σ到達時の想定配当利回り
+        if div_per_share and price_2s > 0:
+            div_at_2s = round(div_per_share / price_2s * 100, 2)
+        else:
+            div_at_2s = 0.0
 
         # 配当利回りキリ番の到達株価（年間配当 ÷ 目標利回り）
         yield_targets = {}
