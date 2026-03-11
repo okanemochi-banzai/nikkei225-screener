@@ -85,6 +85,35 @@ NASDAQ100 = {
     "ZS": "Zscaler",
 }
 
+# S&P500配当貴族（25年以上連続増配）
+SP500_ARISTOCRATS = {
+    "ABT": "Abbott Labs", "ABBV": "AbbVie", "AFL": "Aflac",
+    "APD": "Air Products", "ALB": "Albemarle", "AOS": "A.O. Smith",
+    "ATO": "Atmos Energy", "ADP": "ADP", "BDX": "Becton Dickinson",
+    "BRO": "Brown & Brown", "BF-B": "Brown-Forman", "CAH": "Cardinal Health",
+    "CAT": "Caterpillar", "CVX": "Chevron", "CB": "Chubb",
+    "CINF": "Cincinnati Financial", "CTAS": "Cintas", "CLX": "Clorox",
+    "KO": "Coca-Cola", "CL": "Colgate-Palmolive", "ED": "Con Edison",
+    "DOV": "Dover", "ECL": "Ecolab", "EMR": "Emerson Electric",
+    "ESS": "Essex Property", "EXPD": "Expeditors Intl", "XOM": "ExxonMobil",
+    "FRT": "Federal Realty", "BEN": "Franklin Resources", "GD": "General Dynamics",
+    "GPC": "Genuine Parts", "HRL": "Hormel Foods", "ITW": "Illinois Tool Works",
+    "IBM": "IBM", "JNJ": "Johnson & Johnson", "KMB": "Kimberly-Clark",
+    "LIN": "Linde", "LOW": "Lowe's", "MCD": "McDonald's",
+    "MKC": "McCormick", "MDT": "Medtronic", "NEE": "NextEra Energy",
+    "NUE": "Nucor", "PNR": "Pentair", "PEP": "PepsiCo",
+    "PPG": "PPG Industries", "PG": "Procter & Gamble", "O": "Realty Income",
+    "ROP": "Roper Technologies", "SHW": "Sherwin-Williams",
+    "SWK": "Stanley Black & Decker", "SYY": "Sysco",
+    "TRGP": "Targa Resources", "TGT": "Target", "T": "AT&T",
+    "CHD": "Church & Dwight", "WMT": "Walmart", "WST": "West Pharma",
+    "GWW": "W.W. Grainger", "AWK": "American Water Works",
+    "CHRW": "C.H. Robinson", "FDS": "FactSet", "FAST": "Fastenal",
+    "KVUE": "Kenvue", "NDSN": "Nordson", "POOL": "Pool Corp",
+    "SJM": "J.M. Smucker", "SPGI": "S&P Global", "STE": "Steris",
+    "TFC": "Truist Financial", "WBA": "Walgreens",
+}
+
 # 日経225 (証券コード.T)
 NIKKEI225 = {
     "1332.T": "日本水産", "1333.T": "マルハニチロ",
@@ -544,17 +573,26 @@ def main():
 
     # 全銘柄リスト作成
     all_stocks = []
+    seen_tickers = set()
     for t, n in NIKKEI225.items():
         all_stocks.append((t, n, "Nikkei225"))
+        seen_tickers.add(t)
     for t, n in DOW30.items():
         all_stocks.append((t, n, "Dow30"))
+        seen_tickers.add(t)
     for t, n in NASDAQ100.items():
-        if t not in DOW30:  # 重複排除
+        if t not in seen_tickers:
             all_stocks.append((t, n, "NASDAQ100"))
+            seen_tickers.add(t)
+    for t, n in SP500_ARISTOCRATS.items():
+        if t not in seen_tickers:
+            all_stocks.append((t, n, "配当貴族"))
+            seen_tickers.add(t)
 
     total = len(all_stocks)
+    n_aristo = len([s for s in all_stocks if s[2] == "配当貴族"])
     print(f"\n  Total stocks to process: {total}")
-    print(f"  Nikkei225: {len(NIKKEI225)} / Dow30: {len(DOW30)} / NASDAQ100(unique): {total - len(NIKKEI225) - len(DOW30)}\n")
+    print(f"  Nikkei225: {len(NIKKEI225)} / Dow30: {len(DOW30)} / NASDAQ100: {len([s for s in all_stocks if s[2]=='NASDAQ100'])} / 配当貴族: {n_aristo}\n")
 
     results = []
     errors = []
@@ -748,7 +786,7 @@ def main():
     ws_all.auto_filter.ref = f"A1:R{len(df)+1}"
 
     # --- シート2-4: マーケット別 ---
-    for market_name in ["Nikkei225", "Dow30", "NASDAQ100"]:
+    for market_name in ["Nikkei225", "Dow30", "NASDAQ100", "配当貴族"]:
         ws = wb.create_sheet(title=market_name)
         mdf = df[df["market"] == market_name].reset_index(drop=True)
         ws.append(headers)
@@ -810,13 +848,14 @@ def main():
 
     # ========== PNG: ゾーン分布サマリー ==========
     print("  Generating PNG summary...")
-    fig, axes = plt.subplots(1, 3, figsize=(18, 7))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    axes = axes.flatten()
 
     zone_order = ["STRONG BUY", "BUY ZONE", "MILD DIP", "NEUTRAL", "OVERBOUGHT", "EXTREME HIGH"]
     zone_colors_plt = ["#d32f2f", "#ff8c00", "#fdd835", "#66bb6a", "#ab47bc", "#880e4f"]
 
     for ax_idx, (market, title) in enumerate([
-        ("Nikkei225", "Nikkei 225"), ("Dow30", "Dow 30"), ("NASDAQ100", "NASDAQ 100")
+        ("Nikkei225", "Nikkei 225"), ("Dow30", "Dow 30"), ("NASDAQ100", "NASDAQ 100"), ("配当貴族", "S&P500 配当貴族")
     ]):
         ax = axes[ax_idx]
         mdf = df[df["market"] == market]
@@ -886,7 +925,7 @@ def main():
     print("\n" + "=" * 70)
     print(f"  ZONE SUMMARY ({today})")
     print("=" * 70)
-    for market in ["Nikkei225", "Dow30", "NASDAQ100"]:
+    for market in ["Nikkei225", "Dow30", "NASDAQ100", "配当貴族"]:
         mdf = df[df["market"] == market]
         print(f"\n  [{market}]")
         for z in zone_order:
