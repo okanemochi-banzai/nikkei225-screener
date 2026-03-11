@@ -233,19 +233,40 @@ def calc_deviation(ticker_str, name, market):
 
         # 配当情報取得（yfinanceのdividendYieldは日本株で異常値が多いため、
         # dividendRate ÷ 株価 で自前計算する）
+        div_consec_years = 0
         try:
             info = ticker.info
             div_per_share = info.get("dividendRate") or 0.0
 
             # dividendRateがない場合、直近1年の配当履歴から計算
-            if not div_per_share:
+            divs = pd.Series(dtype=float)
+            try:
+                divs = ticker.dividends
+                if len(divs) > 0 and not div_per_share:
+                    one_year_ago = divs.index[-1] - pd.Timedelta(days=400)
+                    recent_divs = divs[divs.index >= one_year_ago]
+                    if len(recent_divs) > 0:
+                        div_per_share = float(recent_divs.sum())
+            except:
+                pass
+
+            # 連続増配年数の計算（年間配当を年ごとに合算し、前年より増えている連続年数）
+            if len(divs) > 0:
                 try:
-                    divs = ticker.dividends
-                    if len(divs) > 0:
-                        one_year_ago = divs.index[-1] - pd.Timedelta(days=400)
-                        recent_divs = divs[divs.index >= one_year_ago]
-                        if len(recent_divs) > 0:
-                            div_per_share = float(recent_divs.sum())
+                    annual_divs = divs.groupby(divs.index.year).sum()
+                    if len(annual_divs) >= 2:
+                        # 直近の不完全年は除外する可能性があるため、最新年を除外
+                        current_year = datetime.now().year
+                        if annual_divs.index[-1] == current_year and len(annual_divs) >= 3:
+                            annual_divs = annual_divs.iloc[:-1]
+                        # 逆順にたどって連続増配をカウント
+                        years_counted = 0
+                        for i in range(len(annual_divs) - 1, 0, -1):
+                            if annual_divs.iloc[i] > annual_divs.iloc[i-1]:
+                                years_counted += 1
+                            else:
+                                break
+                        div_consec_years = years_counted
                 except:
                     pass
 
@@ -291,6 +312,96 @@ def calc_deviation(ticker_str, name, market):
         else:
             div_at_2s = 0.0
 
+        # ========== 追加シグナル ==========
+        # 日足全データ（乖離率計算前のdfは加工済みなので、元データを使う）
+        df_full = ticker.history(period="max")[["Close", "Open", "High", "Low"]].copy()
+        df_full.columns = ["close", "open", "high", "low"]
+
+        # ① 高配当フラグ（日本株4%超、米国株6%超）
+        div_threshold = 4.0 if market == "Nikkei225" else 6.0
+        flag_high_div = div_yield >= div_threshold
+
+        # ② 過去最高値から半値以下
+        ath = df_full["close"].max()
+        half_from_ath = cur_price <= ath * 0.5
+        drop_from_ath = round((1 - cur_price / ath) * 100, 1) if ath > 0 else 0
+
+        # ③ 25日移動平均線を上抜け（直近で下→上にクロス）
+        sma25_prev = df.iloc[-2]["sma25"] if len(df) >= 2 else cur_sma
+        close_prev = df.iloc[-2]["close"] if len(df) >= 2 else cur_price
+        cross_above_25ma = (close_prev < sma25_prev) and (cur_price >= cur_sma)
+
+        # ④ 月足で久々の陽線（直近月が陽線 かつ その前2ヶ月が陰線）
+        try:
+            df_monthly = df_full.resample("ME").agg({"open": "first", "close": "last"}).dropna()
+            if len(df_monthly) >= 3:
+                latest_m = df_monthly.iloc[-1]
+                prev1_m = df_monthly.iloc[-2]
+                prev2_m = df_monthly.iloc[-3]
+                monthly_bullish = (
+                    latest_m["close"] > latest_m["open"] and  # 直近月が陽線
+                    prev1_m["close"] < prev1_m["open"] and    # 前月が陰線
+                    prev2_m["close"] < prev2_m["open"]        # 前々月も陰線
+                )
+            else:
+                monthly_bullish = False
+        except:
+            monthly_bullish = False
+
+        # ⑤ 手法12: 月足ゴールデンクロス（月足の短期MA(9)が中期MA(24)を上抜け）
+        try:
+            df_m_close = df_full["close"].resample("ME").last().dropna()
+            if len(df_m_close) >= 25:
+                m_sma9 = df_m_close.rolling(9).mean()
+                m_sma24 = df_m_close.rolling(24).mean()
+                # 直近で9MAが24MAを下から上にクロス
+                gc_now = m_sma9.iloc[-1] >= m_sma24.iloc[-1]
+                gc_prev = m_sma9.iloc[-2] < m_sma24.iloc[-2]
+                monthly_golden_cross = gc_now and gc_prev
+                # 底打ち判定: 過去6ヶ月の安値から反発中
+                m_low_6 = df_m_close.iloc[-6:].min()
+                rebounding = cur_price > m_low_6 * 1.05
+                method12 = monthly_golden_cross or (gc_now and rebounding and drop_from_ath >= 30)
+            else:
+                monthly_golden_cross = False
+                method12 = False
+        except:
+            monthly_golden_cross = False
+            method12 = False
+
+        # ⑦ セクター情報取得
+        SECTOR_JP = {
+            "Technology": "テクノロジー", "Financial Services": "金融",
+            "Healthcare": "ヘルスケア", "Consumer Cyclical": "一般消費財",
+            "Consumer Defensive": "生活必需品", "Energy": "エネルギー",
+            "Industrials": "資本財", "Basic Materials": "素材",
+            "Communication Services": "通信", "Utilities": "公益",
+            "Real Estate": "不動産",
+        }
+        try:
+            sector_en = info.get("sector") or ""
+            sector = SECTOR_JP.get(sector_en, sector_en)
+            industry = info.get("industry") or ""
+        except:
+            sector = ""
+            industry = ""
+
+        # シグナルまとめ
+        signals = []
+        if flag_high_div:
+            signals.append("高配当")
+        if half_from_ath:
+            signals.append("半値")
+        if cross_above_25ma:
+            signals.append("日足25MA上抜け")
+        if monthly_bullish:
+            signals.append("月足陽転")
+        if method12:
+            signals.append("月足GC")
+
+        n_signals = len(signals)
+        signal_text = "／".join(signals) if signals else "—"
+
         # 配当利回りキリ番の到達株価（年間配当 ÷ 目標利回り）
         yield_targets = {}
         for pct in [3, 4, 5, 6]:
@@ -302,11 +413,9 @@ def calc_deviation(ticker_str, name, market):
         zone = get_zone(cur_dev, s2l, s3l, s2u, s3u)
 
         # ========== 買いスコア (0〜100) ==========
-        # PDFのセクション2-1の複合条件を点数化
         score = 0
 
         # (1) -2σへの近さ (最大40点)
-        # dist_to_2s <= 0 → 40点, 3%以内 → 30点, 5%以内 → 20点, 10%以内 → 10点
         if dist_2s <= 0:
             score += 40
         elif dist_2s <= 3:
@@ -316,34 +425,37 @@ def calc_deviation(ticker_str, name, market):
         elif dist_2s <= 10:
             score += 10
 
-        # (2) -3σ到達ボーナス (最大10点)
+        # (2) -3σ到達ボーナス (5点)
         if cur_dev <= s3l:
-            score += 10
+            score += 5
 
-        # (3) 配当利回り (最大30点)
-        div_threshold = 4.0 if market == "Nikkei225" else 6.0
-        if div_yield >= div_threshold:
-            score += 30
-        elif div_yield >= div_threshold * 0.75:
+        # (3) 配当利回り (最大20点)
+        if flag_high_div:
             score += 20
+        elif div_yield >= div_threshold * 0.75:
+            score += 12
         elif div_yield >= div_threshold * 0.5:
-            score += 10
+            score += 5
 
-        # (4) ボラティリティの低さ → 大型安定株ほど高得点 (最大10点)
-        if std_d <= 3:
-            score += 10
-        elif std_d <= 5:
-            score += 7
-        elif std_d <= 7:
-            score += 3
+        # (4) テクニカルシグナル (各5点, 最大15点)
+        if cross_above_25ma:
+            score += 5
+        if monthly_bullish:
+            score += 5
+        if method12:
+            score += 5
 
-        # (5) 統計データの充実度 (最大10点)
-        if len(dev) >= 5000:
+        # (5) 底値圏ボーナス (最大10点)
+        if half_from_ath:
             score += 10
-        elif len(dev) >= 3000:
-            score += 7
-        elif len(dev) >= 1000:
-            score += 3
+        elif drop_from_ath >= 30:
+            score += 5
+
+        # (6) 統計充実度 + 安定性 (最大10点)
+        if std_d <= 4 and len(dev) >= 3000:
+            score += 10
+        elif std_d <= 6 and len(dev) >= 2000:
+            score += 5
 
         score = min(score, 100)
 
@@ -367,7 +479,19 @@ def calc_deviation(ticker_str, name, market):
             "div_yield": div_yield,
             "div_per_share": round(div_per_share, 2) if div_per_share else 0.0,
             "div_at_2s": div_at_2s,
+            "div_consec_years": div_consec_years,
             "buy_score": score,
+            "ath": round(ath, 1),
+            "drop_from_ath": drop_from_ath,
+            "half_from_ath": half_from_ath,
+            "cross_above_25ma": cross_above_25ma,
+            "monthly_bullish": monthly_bullish,
+            "method12": method12,
+            "flag_high_div": flag_high_div,
+            "sector": sector,
+            "industry": industry,
+            "signals": signal_text,
+            "n_signals": n_signals,
             **yield_targets,
         }
     except Exception as e:
@@ -421,6 +545,26 @@ def main():
 
     # DataFrameに変換・ソート
     df = pd.DataFrame(results)
+
+    # ⑦ セクター内で唯一下落している銘柄を判定
+    df["sector_sole_dip"] = False
+    for sector in df["sector"].unique():
+        if not sector:
+            continue
+        sec_df = df[df["sector"] == sector]
+        if len(sec_df) < 3:
+            continue
+        # セクター内で乖離率マイナスが1銘柄だけ
+        dipping = sec_df[sec_df["deviation"] < 0]
+        others = sec_df[sec_df["deviation"] >= 0]
+        if len(dipping) == 1 and len(others) >= 2:
+            idx = dipping.index[0]
+            df.loc[idx, "sector_sole_dip"] = True
+            # シグナルに追加
+            old_sig = df.loc[idx, "signals"]
+            df.loc[idx, "signals"] = (old_sig + "／セクター唯一安" if old_sig != "—" else "セクター唯一安")
+            df.loc[idx, "n_signals"] = df.loc[idx, "n_signals"] + 1
+
     df.sort_values("dist_to_2s", ascending=True, inplace=True)
     df.reset_index(drop=True, inplace=True)
 
@@ -431,10 +575,9 @@ def main():
     # --- シート1: 全銘柄一覧 (dist_to_2sでソート) ---
     ws_all = wb.active
     ws_all.title = "All Stocks"
-    headers = ["順位", "買いスコア", "ゾーン", "コード", "銘柄名", "市場", "株価", "25日MA",
-               "乖離率%", "-2σ%", "-3σ%", "-2σ株価", "-3σ株価", "-2σまで%",
-               "配当利回り%", "1株配当", "配当@-2σ%",
-               "配当3%株価", "配当4%株価", "配当5%株価", "配当6%株価",
+    headers = ["順位", "買いスコア", "シグナル", "ゾーン", "コード", "銘柄名", "セクター", "市場",
+               "株価", "25日MA", "乖離率%", "-2σまで%",
+               "配当利回り%", "配当@-2σ%", "連続増配", "最高値からの下落%",
                "標準偏差", "統計日数"]
     ws_all.append(headers)
 
@@ -483,6 +626,17 @@ def main():
             score_cell.font = Font(color="2E7D32", name="Arial")
         c += 1
 
+        # シグナル
+        sig_cell = ws.cell(row=r, column=c, value=row.get("signals", "—"))
+        n_sig = row.get("n_signals", 0)
+        if n_sig >= 3:
+            sig_cell.font = Font(bold=True, color="FF0000", name="Arial")
+        elif n_sig >= 2:
+            sig_cell.font = Font(bold=True, color="FF8C00", name="Arial")
+        elif n_sig >= 1:
+            sig_cell.font = Font(color="1565C0", name="Arial")
+        c += 1
+
         # ゾーン
         zone_cell = ws.cell(row=r, column=c, value=row["zone"])
         z = row["zone"]
@@ -493,14 +647,11 @@ def main():
 
         ws.cell(row=r, column=c, value=row["ticker"]); c += 1
         ws.cell(row=r, column=c, value=row["name"]); c += 1
+        ws.cell(row=r, column=c, value=row.get("sector", "")); c += 1
         ws.cell(row=r, column=c, value=row["market"]); c += 1
         ws.cell(row=r, column=c, value=row["price"]).number_format = '#,##0.00'; c += 1
         ws.cell(row=r, column=c, value=row["sma25"]).number_format = '#,##0.00'; c += 1
         ws.cell(row=r, column=c, value=row["deviation"]).number_format = '0.00"%"'; c += 1
-        ws.cell(row=r, column=c, value=row["sigma2_lower"]).number_format = '0.00"%"'; c += 1
-        ws.cell(row=r, column=c, value=row["sigma3_lower"]).number_format = '0.00"%"'; c += 1
-        ws.cell(row=r, column=c, value=row["price_at_2s"]).number_format = '#,##0.0'; c += 1
-        ws.cell(row=r, column=c, value=row["price_at_3s"]).number_format = '#,##0.0'; c += 1
 
         # -2σまで%
         dist_cell = ws.cell(row=r, column=c, value=row["dist_to_2s"])
@@ -517,27 +668,33 @@ def main():
         div_cell.number_format = '0.00"%"'
         if row["div_yield"] >= div_threshold:
             div_cell.font = Font(bold=True, color="008000", name="Arial")
-        elif row["div_yield"] >= div_threshold * 0.75:
-            div_cell.font = Font(color="2E7D32", name="Arial")
         c += 1
 
-        ws.cell(row=r, column=c, value=row["div_per_share"]).number_format = '#,##0.00'; c += 1
-
+        # 配当@-2σ
         div2s_cell = ws.cell(row=r, column=c, value=row["div_at_2s"])
         div2s_cell.number_format = '0.00"%"'
         if row["div_at_2s"] >= div_threshold:
             div2s_cell.font = Font(bold=True, color="008000", name="Arial")
         c += 1
 
-        # 配当キリ番株価
-        for pct in [3, 4, 5, 6]:
-            val = row.get(f"price_at_{pct}pct", 0)
-            tc = ws.cell(row=r, column=c, value=val if val > 0 else "")
-            tc.number_format = '#,##0.0'
-            if val > 0 and row["price"] <= val:
-                tc.font = Font(bold=True, color="008000", name="Arial")
-                tc.fill = PatternFill("solid", fgColor="E8F5E9")
-            c += 1
+        # 連続増配年数
+        consec = row.get("div_consec_years", 0) or 0
+        consec_cell = ws.cell(row=r, column=c, value=consec if consec > 0 else "")
+        if consec >= 10:
+            consec_cell.font = Font(bold=True, color="008000", name="Arial")
+            consec_cell.fill = PatternFill("solid", fgColor="E8F5E9")
+        elif consec >= 5:
+            consec_cell.font = Font(color="2E7D32", name="Arial")
+        c += 1
+
+        # 最高値からの下落%
+        drop_cell = ws.cell(row=r, column=c, value=row.get("drop_from_ath", 0))
+        drop_cell.number_format = '0.0"%"'
+        if row.get("drop_from_ath", 0) >= 50:
+            drop_cell.font = Font(bold=True, color="FF0000", name="Arial")
+        elif row.get("drop_from_ath", 0) >= 30:
+            drop_cell.font = Font(color="FF8C00", name="Arial")
+        c += 1
 
         ws.cell(row=r, column=c, value=row["std"]).number_format = '0.000'; c += 1
         ws.cell(row=r, column=c, value=row["stat_days"]).number_format = '#,##0'
@@ -546,14 +703,14 @@ def main():
         write_stock_row(ws_all, idx + 2, idx + 1, row, zone_fills, zone_fonts)
 
     # カラム幅調整
-    col_widths = [6, 10, 14, 10, 22, 12, 12, 12, 9, 9, 9, 12, 12, 14, 8, 10, 10, 11, 11, 11, 11, 8, 10]
+    col_widths = [5, 9, 28, 12, 10, 20, 16, 11, 11, 11, 9, 12, 9, 10, 9, 12, 8, 9]
     for i, w in enumerate(col_widths, 1):
         ws_all.column_dimensions[get_column_letter(i)].width = w
 
     # フリーズペイン
     ws_all.freeze_panes = "A2"
     # オートフィルタ
-    ws_all.auto_filter.ref = f"A1:W{len(df)+1}"
+    ws_all.auto_filter.ref = f"A1:R{len(df)+1}"
 
     # --- シート2-4: マーケット別 ---
     for market_name in ["Nikkei225", "Dow30", "NASDAQ100"]:
@@ -572,7 +729,7 @@ def main():
         for i, w in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
-        ws.auto_filter.ref = f"A1:W{len(mdf)+1}"
+        ws.auto_filter.ref = f"A1:R{len(mdf)+1}"
 
     # --- シート5: BUY候補 (dist_to_2s <= 3%) ---
     ws_buy = wb.create_sheet(title="BUY Candidates")
@@ -590,6 +747,22 @@ def main():
     for i, w in enumerate(col_widths, 1):
         ws_buy.column_dimensions[get_column_letter(i)].width = w
     ws_buy.freeze_panes = "A2"
+
+    # --- シート6: シグナル点灯銘柄 (1つ以上のシグナルあり) ---
+    ws_sig = wb.create_sheet(title="Signals")
+    sig_df = df[df["n_signals"] >= 1].sort_values("n_signals", ascending=False).reset_index(drop=True)
+    ws_sig.append(headers)
+    sig_fill = PatternFill("solid", fgColor="1A237E")
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws_sig.cell(row=1, column=col_idx)
+        cell.fill = sig_fill
+        cell.font = Font(bold=True, color="FFFFFF", size=10, name="Arial")
+        cell.alignment = Alignment(horizontal="center")
+    for idx4, row in sig_df.iterrows():
+        write_stock_row(ws_sig, idx4 + 2, idx4 + 1, row, zone_fills, zone_fonts)
+    for i, w in enumerate(col_widths, 1):
+        ws_sig.column_dimensions[get_column_letter(i)].width = w
+    ws_sig.freeze_panes = "A2"
 
     xlsx_path = os.path.join(OUTPUT_DIR, f"stock_deviation_{today}.xlsx")
     wb.save(xlsx_path)
