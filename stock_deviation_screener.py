@@ -253,29 +253,34 @@ def get_zone(dev, s2l, s3l, s2u, s3u):
     else: return "EXTREME HIGH"
 
 
-# ─── 日本株配当データ（CSVから読み込み） ──────────────
-_jp_div_data = {}
+# ─── 配当データ（CSVから読み込み） ─────────────────
+_div_csv_data = {}  # JP + US combined
 
-def load_jp_dividends():
-    """リポジトリ内の jp_dividends.csv から日本株の1株配当を読み込む"""
-    global _jp_div_data
-    csv_paths = [
-        os.path.join(os.path.dirname(__file__), "jp_dividends.csv"),
-        "jp_dividends.csv",
-    ]
-    for path in csv_paths:
-        if os.path.exists(path):
-            try:
-                df_div = pd.read_csv(path, dtype={"ticker": str})
-                for _, row in df_div.iterrows():
-                    t = str(row["ticker"]).strip()
-                    d = float(row.get("div_per_share", 0) or 0)
-                    _jp_div_data[t] = d
-                print(f"  Loaded jp_dividends.csv: {len(_jp_div_data)} stocks")
-                return
-            except Exception as e:
-                print(f"  [WARN] Failed to load {path}: {e}")
-    print("  [WARN] jp_dividends.csv not found. JP dividend data will be 0.")
+def load_dividend_csvs():
+    """jp_dividends.csv と us_dividends.csv から1株配当を読み込む"""
+    global _div_csv_data
+
+    for filename in ["jp_dividends.csv", "us_dividends.csv"]:
+        csv_paths = [
+            os.path.join(os.path.dirname(__file__), filename),
+            filename,
+        ]
+        for path in csv_paths:
+            if os.path.exists(path):
+                try:
+                    df_div = pd.read_csv(path, dtype={"ticker": str})
+                    count = 0
+                    for _, row in df_div.iterrows():
+                        t = str(row["ticker"]).strip()
+                        d = float(row.get("div_per_share", 0) or 0)
+                        _div_csv_data[t] = d
+                        count += 1
+                    print(f"  Loaded {filename}: {count} stocks")
+                    break
+                except Exception as e:
+                    print(f"  [WARN] Failed to load {path}: {e}")
+        else:
+            print(f"  [INFO] {filename} not found, will use yfinance fallback.")
 
 
 def calc_deviation(ticker_str, name, market):
@@ -287,8 +292,7 @@ def calc_deviation(ticker_str, name, market):
             return None
 
         # 配当情報取得
-        # 日本株: Yahooファイナンス日本版からスクレイピング（正確）
-        # 米国株: yfinanceの配当履歴 + API値
+        # 日米共通: CSVを最優先。CSVにない米国株のみyfinanceフォールバック
         div_consec_years = 0
         div_per_share = 0.0
         divs = pd.Series(dtype=float)
@@ -297,50 +301,34 @@ def calc_deviation(ticker_str, name, market):
         try:
             info = ticker.info
 
-            if is_jp:
-                # ===== 日本株: CSVから1株配当を取得 =====
-                div_per_share = _jp_div_data.get(ticker_str, 0.0)
-
-                # 連続増配はyfinanceの配当履歴から計算
+            # Step 1: CSVから取得（日米共通）
+            if ticker_str in _div_csv_data:
+                div_per_share = _div_csv_data[ticker_str]
+            elif not is_jp:
+                # Step 2: CSVにない米国株はyfinanceフォールバック
                 try:
-                    divs = ticker.dividends
-                except:
-                    pass
-            else:
-                # ===== 米国株: yfinanceから取得 =====
-                try:
-                    divs = ticker.dividends
-                except:
-                    pass
-
-                hist_rate = 0.0
-                if len(divs) > 0:
-                    try:
-                        latest_div_date = divs.index[-1]
+                    divs_tmp = ticker.dividends
+                    if len(divs_tmp) > 0:
+                        latest_div_date = divs_tmp.index[-1]
                         one_year_ago = latest_div_date - pd.Timedelta(days=370)
-                        recent_divs = divs[divs.index >= one_year_ago]
+                        recent_divs = divs_tmp[divs_tmp.index >= one_year_ago]
                         if len(recent_divs) > 0:
-                            hist_rate = float(recent_divs.sum())
-                    except:
-                        pass
-
-                trailing_rate = info.get("trailingAnnualDividendRate") or 0.0
-                api_rate = info.get("dividendRate") or 0.0
+                            div_per_share = float(recent_divs.sum())
+                except:
+                    pass
+                # サニティチェック
                 tmp_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
-
-                candidates = []
-                for rate, label in [(hist_rate, "hist"), (trailing_rate, "trailing"), (api_rate, "rate")]:
-                    if rate > 0 and tmp_price > 0:
-                        yld = rate / tmp_price * 100
-                        if 0.1 <= yld <= 12:
-                            candidates.append((rate, yld, label))
-
-                if candidates:
-                    priority = {"hist": 0, "trailing": 1, "rate": 2}
-                    candidates.sort(key=lambda x: priority.get(x[2], 9))
-                    div_per_share = candidates[0][0]
+                if div_per_share > 0 and tmp_price > 0:
+                    check_yld = div_per_share / tmp_price * 100
+                    if check_yld > 15:
+                        div_per_share = 0.0
 
             # 連続増配年数の計算（日米共通、yfinance配当履歴ベース）
+            try:
+                divs = ticker.dividends
+            except:
+                pass
+
             if len(divs) > 0:
                 try:
                     annual_divs = divs.groupby(divs.index.year).sum()
@@ -600,8 +588,8 @@ def main():
     print(f"  Individual Stock Ideal Deviation Screener — {today}")
     print("=" * 70)
 
-    # 日本株配当データを読み込み
-    load_jp_dividends()
+    # 配当データを読み込み（日米両方）
+    load_dividend_csvs()
 
     # 全銘柄リスト作成
     all_stocks = []
