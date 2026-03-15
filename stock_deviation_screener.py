@@ -27,7 +27,7 @@ import os
 import json
 import warnings
 import traceback
-import requests
+import requests  # ← 追加: J-Quants API通信用
 
 warnings.filterwarnings("ignore")
 
@@ -283,6 +283,39 @@ def load_dividend_csvs():
         else:
             print(f"  [INFO] {filename} not found, will use yfinance fallback.")
 
+def get_jquants_dividend_v2(ticker_str):
+    """J-Quants V2 APIから最新の予想1株配当を取得する"""
+    api_key = os.environ.get("JQUANTS_API_KEY")
+    if not api_key:
+        return None
+
+    # yfinanceのコード(例: 7203.T)から数字だけを取り出して末尾に0をつける(72030)
+    base_code = ticker_str.split('.')[0]
+    jq_code = f"{base_code}0"
+    
+    headers = {'x-api-key': api_key}
+    fins_url = f"https://api.jquants.com/v2/fins/statements?code={jq_code}"
+    
+    try:
+        # APIのアクセス制限対策（必須）
+        time.sleep(0.5)
+        res = requests.get(fins_url, headers=headers, timeout=10)
+        
+        if res.status_code == 200:
+            data = res.json()
+            statements = data.get("data") or data.get("statements")
+            
+            if statements and len(statements) > 0:
+                latest = statements[-1]
+                div = latest.get("ForecastDividendPerShareAnnual")
+                # 未定や空データの場合は0.0を返す
+                if div in ["", "-", None]:
+                    return 0.0
+                return float(div)
+    except Exception as e:
+        print(f"  [WARN] J-Quants API error for {ticker_str}: {e}")
+        
+    return None
 
 def calc_deviation(ticker_str, name, market):
     """1銘柄の理想乖離を計算"""
@@ -293,7 +326,6 @@ def calc_deviation(ticker_str, name, market):
             return None
 
         # 配当情報取得
-        # 日米共通: CSVを最優先。CSVにない米国株のみyfinanceフォールバック
         div_consec_years = 0
         div_per_share = 0.0
         divs = pd.Series(dtype=float)
@@ -302,27 +334,35 @@ def calc_deviation(ticker_str, name, market):
         try:
             info = ticker.info
 
-            # Step 1: CSVから取得（日米共通）
-            if ticker_str in _div_csv_data:
-                div_per_share = _div_csv_data[ticker_str]
-            elif not is_jp:
-                # Step 2: CSVにない米国株はyfinanceフォールバック
-                try:
-                    divs_tmp = ticker.dividends
-                    if len(divs_tmp) > 0:
-                        latest_div_date = divs_tmp.index[-1]
-                        one_year_ago = latest_div_date - pd.Timedelta(days=370)
-                        recent_divs = divs_tmp[divs_tmp.index >= one_year_ago]
-                        if len(recent_divs) > 0:
-                            div_per_share = float(recent_divs.sum())
-                except:
-                    pass
-                # サニティチェック
-                tmp_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
-                if div_per_share > 0 and tmp_price > 0:
-                    check_yld = div_per_share / tmp_price * 100
-                    if check_yld > 15:
-                        div_per_share = 0.0
+            # Step 1: 日本株はJ-Quants APIから最新予想配当を取得
+            if is_jp:
+                jq_div = get_jquants_dividend_v2(ticker_str)
+                if jq_div is not None:
+                    div_per_share = jq_div
+                elif ticker_str in _div_csv_data:
+                    # APIエラー時の保険としてCSVのデータを採用
+                    div_per_share = _div_csv_data[ticker_str]
+            # Step 2: 米国株はCSV優先、無ければyfinanceフォールバック
+            else:
+                if ticker_str in _div_csv_data:
+                    div_per_share = _div_csv_data[ticker_str]
+                else:
+                    try:
+                        divs_tmp = ticker.dividends
+                        if len(divs_tmp) > 0:
+                            latest_div_date = divs_tmp.index[-1]
+                            one_year_ago = latest_div_date - pd.Timedelta(days=370)
+                            recent_divs = divs_tmp[divs_tmp.index >= one_year_ago]
+                            if len(recent_divs) > 0:
+                                div_per_share = float(recent_divs.sum())
+                    except:
+                        pass
+                    # サニティチェック
+                    tmp_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+                    if div_per_share > 0 and tmp_price > 0:
+                        check_yld = div_per_share / tmp_price * 100
+                        if check_yld > 15:
+                            div_per_share = 0.0
 
             # 連続増配年数の計算（日米共通、yfinance配当履歴ベース）
             try:
@@ -964,3 +1004,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
