@@ -1,4 +1,4 @@
-name: Stock Deviation Screener
+Name: Stock Deviation Screener
 
 on:
   # 毎営業日 16:30 JST = 07:30 UTC
@@ -34,6 +34,8 @@ jobs:
           fc-cache -f
 
       - name: Run stock screener
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: |
           mkdir -p output
           OUTPUT_DIR=output python stock_deviation_screener.py
