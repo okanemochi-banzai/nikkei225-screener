@@ -1,4 +1,4 @@
-Name: Stock Deviation Screener
+name: Stock Deviation Screener
 
 on:
   # 毎営業日 16:30 JST = 07:30 UTC
