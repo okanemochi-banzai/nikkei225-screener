@@ -27,7 +27,7 @@ import os
 import json
 import warnings
 import traceback
-import requests  # ← 追加: J-Quants API通信用
+import requests  # J-Quants API通信用
 
 warnings.filterwarnings("ignore")
 
@@ -283,13 +283,15 @@ def load_dividend_csvs():
         else:
             print(f"  [INFO] {filename} not found, will use yfinance fallback.")
 
+
+# ─── デバッグ用のJ-Quants取得関数 ─────────────────
 def get_jquants_dividend_v2(ticker_str):
-    """J-Quants V2 APIから最新の予想1株配当を取得する"""
+    """J-Quants V2 APIから最新の予想1株配当を取得する（デバッグ版）"""
     api_key = os.environ.get("JQUANTS_API_KEY")
     if not api_key:
+        print(f"  [{ticker_str}] ❌ APIキーが空です！GitHub Secretsかymlの設定を確認して。")
         return None
 
-    # yfinanceのコード(例: 7203.T)から数字だけを取り出して末尾に0をつける(72030)
     base_code = ticker_str.split('.')[0]
     jq_code = f"{base_code}0"
     
@@ -297,7 +299,6 @@ def get_jquants_dividend_v2(ticker_str):
     fins_url = f"https://api.jquants.com/v2/fins/statements?code={jq_code}"
     
     try:
-        # APIのアクセス制限対策（必須）
         time.sleep(0.5)
         res = requests.get(fins_url, headers=headers, timeout=10)
         
@@ -308,14 +309,20 @@ def get_jquants_dividend_v2(ticker_str):
             if statements and len(statements) > 0:
                 latest = statements[-1]
                 div = latest.get("ForecastDividendPerShareAnnual")
-                # 未定や空データの場合は0.0を返す
+                print(f"  [{ticker_str}] ✅ API取得成功: 配当 = {div}")
                 if div in ["", "-", None]:
                     return 0.0
                 return float(div)
+            else:
+                print(f"  [{ticker_str}] ⚠️ データは取得できたが決算情報が空: {data}")
+        else:
+            print(f"  [{ticker_str}] ❌ APIエラー: ステータス {res.status_code} - 内容: {res.text}")
+            
     except Exception as e:
-        print(f"  [WARN] J-Quants API error for {ticker_str}: {e}")
+        print(f"  [WARN] J-Quants API通信エラー ({ticker_str}): {e}")
         
     return None
+
 
 def calc_deviation(ticker_str, name, market):
     """1銘柄の理想乖離を計算"""
