@@ -1,5 +1,5 @@
 # #!/usr/bin/env python3
-“””
+"""
 個別株 理想乖離スクリーナー (Individual Stock Ideal Deviation Screener)
 
 日経225 / ダウ30 / NASDAQ100 の全銘柄に対して
