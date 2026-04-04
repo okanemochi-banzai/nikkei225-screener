@@ -526,12 +526,65 @@ def calc_deviation(ticker_str, name, market):
         else:
             biz_momentum = "—"
 
+        # ⑩ RSI（14日）
+        try:
+            closes = df["close"]
+            delta = closes.diff()
+            gain = delta.clip(lower=0).rolling(14).mean()
+            loss = (-delta.clip(upper=0)).rolling(14).mean()
+            rs = gain.iloc[-1] / loss.iloc[-1] if loss.iloc[-1] != 0 else 100
+            rsi_14 = round(100 - (100 / (1 + rs)), 1)
+        except:
+            rsi_14 = 0.0
+        rsi_oversold = rsi_14 > 0 and rsi_14 <= 30
+
+        # ⑪ 52週安値からの位置
+        try:
+            week52_low = info.get("fiftyTwoWeekLow") or 0
+            week52_high = info.get("fiftyTwoWeekHigh") or 0
+            if week52_low > 0 and week52_high > week52_low:
+                week52_pos = round((cur_price - week52_low) / (week52_high - week52_low) * 100, 1)
+            else:
+                week52_pos = 0.0
+        except:
+            week52_pos = 0.0
+
+        # ⑫ PER（予想PER）
+        try:
+            per = round(info.get("forwardPE") or info.get("trailingPE") or 0, 1)
+        except:
+            per = 0.0
+
+        # ⑬ ROE
+        try:
+            roe_raw = info.get("returnOnEquity") or 0
+            roe = round(roe_raw * 100, 1) if roe_raw else 0.0
+        except:
+            roe = 0.0
+
+        # ⑭ 自己資本比率（debtToEquityから逆算）
+        try:
+            de_ratio = info.get("debtToEquity")  # yfinanceは%で返す (例: 50.0 = 50%)
+            if de_ratio is not None and de_ratio >= 0:
+                equity_ratio = round(100 / (1 + de_ratio / 100), 1)
+            else:
+                equity_ratio = 0.0
+        except:
+            equity_ratio = 0.0
+
+        # 優良財務フラグ: 自己資本比率50%以上 かつ ROE10%以上
+        is_quality = equity_ratio >= 50 and roe >= 10
+
         # シグナルまとめ
         signals = []
         if flag_high_div:
             signals.append("高配当")
         if pbr_under1:
             signals.append("PBR1倍割れ")
+        if rsi_oversold:
+            signals.append("RSI30以下")
+        if is_quality:
+            signals.append("優良財務")
         if half_from_ath:
             signals.append("半値")
         if cross_above_25ma:
@@ -603,6 +656,14 @@ def calc_deviation(ticker_str, name, market):
         elif biz_momentum == "微増":
             score += 2
 
+        # (8) RSI売られすぎ (5点)
+        if rsi_oversold:
+            score += 5
+
+        # (9) 優良財務ボーナス (最大5点) — 自己資本比率50%以上 かつ ROE10%以上
+        if is_quality:
+            score += 5
+
         score = min(score, 100)
 
         return {
@@ -639,6 +700,13 @@ def calc_deviation(ticker_str, name, market):
             "rev_growth_pct": rev_growth_pct,
             "earn_growth_pct": earn_growth_pct,
             "biz_momentum": biz_momentum,
+            "rsi_14": rsi_14,
+            "rsi_oversold": rsi_oversold,
+            "week52_pos": week52_pos,
+            "per": per,
+            "roe": roe,
+            "equity_ratio": equity_ratio,
+            "is_quality": is_quality,
             "sector": sector,
             "industry": industry,
             "signals": signal_text,
@@ -745,7 +813,8 @@ def main():
     ws_all.title = "All Stocks"
     headers = ["順位", "買いスコア", "シグナル", "ゾーン", "コード", "銘柄名", "セクター", "市場",
                "株価", "25日MA", "乖離率%", "-2σまで%",
-               "配当利回り%", "配当@-2σ%", "連続増配", "PBR", "業績", "売上成長%", "利益成長%",
+               "配当利回り%", "配当@-2σ%", "連続増配", "PBR", "PER", "ROE%", "自己資本比率%",
+               "RSI(14)", "52週位置%", "業績", "売上成長%", "利益成長%",
                "最高値からの下落%", "標準偏差", "統計日数"]
     ws_all.append(headers)
 
@@ -866,6 +935,59 @@ def main():
             pbr_cell.font = Font(color="FF8C00", name="Arial")
         c += 1
 
+        # PER
+        per_val = row.get("per", 0) or 0
+        per_cell = ws.cell(row=r, column=c, value=per_val if per_val > 0 else "")
+        per_cell.number_format = '0.0'
+        if 0 < per_val <= 10:
+            per_cell.font = Font(bold=True, color="008000", name="Arial")
+        elif 0 < per_val <= 15:
+            per_cell.font = Font(color="2E7D32", name="Arial")
+        c += 1
+
+        # ROE%
+        roe_val = row.get("roe", 0) or 0
+        roe_cell = ws.cell(row=r, column=c, value=roe_val if roe_val != 0 else "")
+        roe_cell.number_format = '0.0"%"'
+        if roe_val >= 15:
+            roe_cell.font = Font(bold=True, color="008000", name="Arial")
+        elif roe_val >= 10:
+            roe_cell.font = Font(color="2E7D32", name="Arial")
+        elif roe_val < 0:
+            roe_cell.font = Font(color="FF0000", name="Arial")
+        c += 1
+
+        # 自己資本比率%
+        eq_ratio = row.get("equity_ratio", 0) or 0
+        eq_cell = ws.cell(row=r, column=c, value=eq_ratio if eq_ratio > 0 else "")
+        eq_cell.number_format = '0.0"%"'
+        if eq_ratio >= 50:
+            eq_cell.font = Font(color="008000", name="Arial")
+        elif eq_ratio < 30 and eq_ratio > 0:
+            eq_cell.font = Font(color="FF0000", name="Arial")
+        c += 1
+
+        # RSI(14)
+        rsi_val = row.get("rsi_14", 0) or 0
+        rsi_cell = ws.cell(row=r, column=c, value=rsi_val if rsi_val > 0 else "")
+        rsi_cell.number_format = '0.0'
+        if 0 < rsi_val <= 30:
+            rsi_cell.font = Font(bold=True, color="FF0000", name="Arial")
+            rsi_cell.fill = PatternFill("solid", fgColor="FFEBEE")
+        elif rsi_val >= 70:
+            rsi_cell.font = Font(color="FF8C00", name="Arial")
+        c += 1
+
+        # 52週位置%
+        w52 = row.get("week52_pos", 0) or 0
+        w52_cell = ws.cell(row=r, column=c, value=w52)
+        w52_cell.number_format = '0.0"%"'
+        if w52 <= 10:
+            w52_cell.font = Font(bold=True, color="FF0000", name="Arial")
+        elif w52 <= 25:
+            w52_cell.font = Font(color="FF8C00", name="Arial")
+        c += 1
+
         # 業績モメンタム
         biz = row.get("biz_momentum", "—")
         biz_cell = ws.cell(row=r, column=c, value=biz)
@@ -913,14 +1035,14 @@ def main():
         write_stock_row(ws_all, idx + 2, idx + 1, row, zone_fills, zone_fonts)
 
     # カラム幅調整
-    col_widths = [5, 9, 28, 12, 10, 20, 16, 11, 11, 11, 9, 12, 9, 10, 9, 7, 10, 9, 9, 12, 8, 9]
+    col_widths = [5, 9, 28, 12, 10, 20, 16, 11, 11, 11, 9, 12, 9, 10, 9, 7, 7, 8, 10, 7, 9, 10, 9, 9, 12, 8, 9]
     for i, w in enumerate(col_widths, 1):
         ws_all.column_dimensions[get_column_letter(i)].width = w
 
     # フリーズペイン
     ws_all.freeze_panes = "A2"
     # オートフィルタ
-    ws_all.auto_filter.ref = f"A1:V{len(df)+1}"
+    ws_all.auto_filter.ref = f"A1:AA{len(df)+1}"
 
     # --- シート2-4: マーケット別 ---
     for market_name in ["Nikkei225", "Dow30", "NASDAQ100", "配当貴族", "SP500高配当"]:
@@ -939,7 +1061,7 @@ def main():
         for i, w in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
-        ws.auto_filter.ref = f"A1:V{len(mdf)+1}"
+        ws.auto_filter.ref = f"A1:AA{len(mdf)+1}"
 
     # --- シート5: BUY候補 (dist_to_2s <= 3%) ---
     ws_buy = wb.create_sheet(title="BUY Candidates")
