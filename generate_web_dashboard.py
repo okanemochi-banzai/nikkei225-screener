@@ -79,7 +79,6 @@ def _row(rank, r):
     dev = r.get("deviation", 0)
     dist = r.get("dist_to_2s", 0)
     div_val = r.get("div_yield", 0) or 0
-    div2s = r.get("div_at_2s", 0) or 0
     score = r.get("buy_score", 0) or 0
     zone = r.get("zone", "")
     market = r.get("market", "")
@@ -88,6 +87,11 @@ def _row(rank, r):
     consec = r.get("div_consec_years", 0) or 0
     pbr = r.get("pbr", 0) or 0
     biz = r.get("biz_momentum", "—")
+    ath_drop = r.get("drop_from_ath", 0) or 0
+    rsi = r.get("rsi_14", 0) or 0
+    per = r.get("per", 0) or 0
+    roe = r.get("roe", 0) or 0
+    w52 = r.get("week52_pos", 0) or 0
 
     # 行クラス
     rc = ""
@@ -100,19 +104,16 @@ def _row(rank, r):
     elif score >= 50:
         rc = "row-warm"
 
-    # PBR色
+    # 色クラス
     pbr_cls = "neg" if 0 < pbr < 1 else ("hot" if 0 < pbr < 1.5 else "")
     pbr_txt = f"{pbr:.1f}" if pbr > 0 else "—"
-
-    # 業績色
     biz_cls = "pos" if biz == "増収増益" else ("neg" if biz in ["減収減益","減益"] else "")
-
-    ath_drop = r.get("drop_from_ath", 0) or 0
-
-    # スコア色
     sc = "s-h" if score >= 70 else ("s-m" if score >= 50 else ("s-l" if score >= 30 else "s-n"))
+    rsi_cls = "neg" if 0 < rsi <= 30 else ("hot" if rsi >= 70 else "")
+    per_cls = "pos" if 0 < per <= 10 else ""
+    roe_cls = "pos" if roe >= 15 else ("neg" if roe < 0 else "")
 
-    return f"""<tr class="{rc}" data-score="{score}" data-dist="{dist}" data-div="{div_val}" data-dev="{dev}" data-consec="{consec}" data-pbr="{pbr}" data-ath="{ath_drop}">
+    return f"""<tr class="{rc}" data-score="{score}" data-dist="{dist}" data-div="{div_val}" data-dev="{dev}" data-consec="{consec}" data-pbr="{pbr}" data-ath="{ath_drop}" data-rsi="{rsi}" data-per="{per}" data-roe="{roe}" data-w52="{w52}">
       <td>{rank}</td>
       <td><div class="sc {sc}"><b>{score}</b><div class="sf" style="width:{score}%"></div></div></td>
       <td class="sig-cell">{_signals_html(r)}</td>
@@ -126,6 +127,10 @@ def _row(rank, r):
       <td class="{'pos' if div_val>=div_thr else ''}">{div_val:.1f}%</td>
       <td class="{'pos' if consec>=5 else ''}">{consec if consec>0 else '—'}</td>
       <td class="{pbr_cls}">{pbr_txt}</td>
+      <td class="hide-m {per_cls}">{f'{per:.0f}' if per > 0 else '—'}</td>
+      <td class="hide-m {roe_cls}">{f'{roe:.0f}%' if roe != 0 else '—'}</td>
+      <td class="hide-m {rsi_cls}">{f'{rsi:.0f}' if rsi > 0 else '—'}</td>
+      <td class="hide-m">{w52:.0f}%</td>
       <td class="hide-m {biz_cls}">{biz}</td>
       <td class="hide-m">{ath_drop:.0f}%</td>
     </tr>"""
@@ -136,6 +141,8 @@ def _signals_html(r):
     tags = []
     if r.get("flag_high_div"): tags.append('<span class="sig sig-div">高配当</span>')
     if r.get("pbr_under1"): tags.append('<span class="sig sig-pbr">PBR&lt;1</span>')
+    if r.get("rsi_oversold"): tags.append('<span class="sig sig-rsi">RSI≤30</span>')
+    if r.get("is_quality"): tags.append('<span class="sig sig-qual">優良財務</span>')
     if r.get("half_from_ath"): tags.append('<span class="sig sig-half">半値</span>')
     if r.get("cross_above_25ma"): tags.append('<span class="sig sig-ma">日足25MA上抜け</span>')
     if r.get("monthly_bullish"): tags.append('<span class="sig sig-bull">月足陽転</span>')
@@ -157,6 +164,10 @@ def _table(records, tid):
       <th class="sortable" data-sort="div">配当 ⇅</th>
       <th class="sortable" data-sort="consec">連続増配 ⇅</th>
       <th class="sortable" data-sort="pbr">PBR ⇅</th>
+      <th class="hide-m sortable" data-sort="per">PER ⇅</th>
+      <th class="hide-m sortable" data-sort="roe">ROE ⇅</th>
+      <th class="hide-m sortable" data-sort="rsi">RSI ⇅</th>
+      <th class="hide-m sortable" data-sort="w52">52週 ⇅</th>
       <th class="hide-m">業績</th>
       <th class="hide-m sortable" data-sort="ath">ATH下落 ⇅</th>
     </tr></thead><tbody>{rows}</tbody></table></div>"""
@@ -285,6 +296,8 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .sig{{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.55rem;font-weight:700;margin:1px;letter-spacing:0.2px}}
 .sig-div{{background:rgba(34,197,94,0.2);color:var(--grn)}}
 .sig-pbr{{background:rgba(239,68,68,0.2);color:var(--red)}}
+.sig-rsi{{background:rgba(239,68,68,0.25);color:var(--red)}}
+.sig-qual{{background:rgba(56,189,248,0.2);color:var(--ac)}}
 .sig-half{{background:rgba(239,68,68,0.2);color:var(--red)}}
 .sig-ma{{background:rgba(56,189,248,0.2);color:var(--ac)}}
 .sig-bull{{background:rgba(234,179,8,0.2);color:var(--ylw)}}
@@ -366,6 +379,8 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
     <div class="legend-items">
       <div class="legend-item"><span class="sig sig-div">高配当</span>日本株4%超・米国株6%超</div>
       <div class="legend-item"><span class="sig sig-pbr">PBR&lt;1</span>純資産に対して株価が割安</div>
+      <div class="legend-item"><span class="sig sig-rsi">RSI≤30</span>売られすぎ（14日RSIが30以下）</div>
+      <div class="legend-item"><span class="sig sig-qual">優良財務</span>自己資本比率50%以上 かつ ROE10%以上</div>
       <div class="legend-item"><span class="sig sig-half">半値</span>過去最高値から50%以上下落</div>
       <div class="legend-item"><span class="sig sig-ma">日足25MA上抜け</span>日足終値が25日移動平均線を上抜け</div>
       <div class="legend-item"><span class="sig sig-bull">月足陽転</span>前2ヶ月陰線→直近月が陽線に転換</div>
@@ -468,7 +483,9 @@ def main():
                          ("cross_above_25ma",False),("monthly_bullish",False),
                          ("method12",False),("flag_high_div",False),("sector_sole_dip",False),
                          ("div_consec_years",0),("pbr",0.0),("pbr_under1",False),
-                         ("biz_momentum","—"),("rev_growth_pct",0.0),("earn_growth_pct",0.0)]:
+                         ("biz_momentum","—"),("rev_growth_pct",0.0),("earn_growth_pct",0.0),
+                         ("rsi_14",0.0),("rsi_oversold",False),("week52_pos",0.0),
+                         ("per",0.0),("roe",0.0),("equity_ratio",0.0),("is_quality",False)]:
         if col not in df.columns:
             df[col] = default
         df[col] = df[col].fillna(default)
