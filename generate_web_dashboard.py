@@ -173,20 +173,39 @@ def _table(records, tid):
     </tr></thead><tbody>{rows}</tbody></table></div>"""
 
 
-def generate_html(df, today):
-    # 統計
-    n_strong = len(df[df["zone"]=="STRONG BUY"])
-    n_buy = len(df[df["zone"]=="BUY ZONE"])
-    n_near = len(df[df["dist_to_2s"]<=3.0])
-    n_signals = len(df[df["n_signals"]>=1])
-    n_over = len(df[df["zone"].isin(["OVERBOUGHT","EXTREME HIGH"])])
+def generate_html(df, today, page_config):
+    """
+    page_config = {
+        "title": "日本株",
+        "filename": "index.html",
+        "markets": ["Nikkei225"],
+        "tabs": [("all","全て"), ("n225","日経225")],
+        "tab_keys": {"all": None, "n225": "Nikkei225"},
+        "nav_active": "jp",
+        "other_page": ("us.html", "米国株"),
+    }
+    """
+    title = page_config["title"]
+    markets = page_config["markets"]
+    nav_active = page_config["nav_active"]
 
-    # マーケット別
+    # Filter to this page's markets
+    page_df = df[df["market"].isin(markets)].copy()
+    page_df.reset_index(drop=True, inplace=True)
+
+    # 統計
+    n_strong = len(page_df[page_df["zone"]=="STRONG BUY"])
+    n_buy = len(page_df[page_df["zone"]=="BUY ZONE"])
+    n_near = len(page_df[page_df["dist_to_2s"]<=3.0])
+    n_signals = len(page_df[page_df["n_signals"]>=1])
+    n_over = len(page_df[page_df["zone"].isin(["OVERBOUGHT","EXTREME HIGH"])])
+
+    # マーケット別バー
     zone_order = ["STRONG BUY","BUY ZONE","MILD DIP","NEUTRAL","OVERBOUGHT","EXTREME HIGH"]
     zone_colors = ["#ef4444","#f97316","#eab308","#22c55e","#a855f7","#ec4899"]
     market_bars = ""
-    for m in ["Nikkei225","Dow30","NASDAQ100","配当貴族","SP500高配当"]:
-        mdf = df[df["market"]==m]
+    for m in markets:
+        mdf = page_df[page_df["market"]==m]
         total = len(mdf)
         if total == 0:
             continue
@@ -200,15 +219,31 @@ def generate_html(df, today):
 
     # タブデータ
     all_data = {}
-    for m in ["Nikkei225","Dow30","NASDAQ100","配当貴族","SP500高配当"]:
-        all_data[m] = df[df["market"]==m].to_dict("records")
+    for m in markets:
+        all_data[m] = page_df[page_df["market"]==m].to_dict("records")
+
+    # タブボタン生成
+    tab_buttons = f'<button class="tb active" onclick="switchTab(\'all\',this)">全て ({len(page_df)})</button>\n'
+    for tab_id, tab_label, market_key in page_config["tabs"]:
+        data = all_data.get(market_key, [])
+        tab_buttons += f'        <button class="tb" onclick="switchTab(\'{tab_id}\',this)">{tab_label} ({len(data)})</button>\n'
+
+    # タブパネル生成
+    tab_panels = f'  <div id="tab-all" class="tp active">{_table(page_df.to_dict("records"), "tbl-all")}</div>\n'
+    for tab_id, tab_label, market_key in page_config["tabs"]:
+        data = all_data.get(market_key, [])
+        tab_panels += f'  <div id="tab-{tab_id}" class="tp">{_table(data, "tbl-{tab_id}")}</div>\n'
+
+    # ナビゲーション
+    jp_cls = "nav-active" if nav_active == "jp" else ""
+    us_cls = "nav-active" if nav_active == "us" else ""
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>理想乖離ダッシュボード</title>
+<title>理想乖離ダッシュボード — {title}</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+JP:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
 :root{{--bg:#0a0e17;--s1:#111827;--s2:#1a2235;--bd:#1e2a3a;--tx:#e2e8f0;--dim:#64748b;--ac:#38bdf8;--red:#ef4444;--org:#f97316;--ylw:#eab308;--grn:#22c55e;--prp:#a855f7;--pnk:#ec4899}}
@@ -216,24 +251,25 @@ def generate_html(df, today):
 body{{font-family:'Noto Sans JP','JetBrains Mono',sans-serif;background:var(--bg);color:var(--tx);min-height:100vh}}
 .grain{{position:fixed;inset:0;background:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:9999}}
 
-header{{padding:2rem 2rem 1.2rem;border-bottom:1px solid var(--bd);background:linear-gradient(180deg,rgba(17,24,39,0.95),var(--bg))}}
+/* Nav */
+.nav{{display:flex;gap:0;border-bottom:2px solid var(--bd);background:var(--s1)}}
+.nav a{{padding:0.8rem 1.5rem;font-family:'JetBrains Mono',monospace;font-size:0.8rem;font-weight:600;color:var(--dim);text-decoration:none;transition:all 0.15s;border-bottom:2px solid transparent;margin-bottom:-2px}}
+.nav a:hover{{color:var(--tx)}}
+.nav a.nav-active{{color:var(--ac);border-bottom-color:var(--ac)}}
+
+header{{padding:1.5rem 2rem 1rem;border-bottom:1px solid var(--bd);background:linear-gradient(180deg,rgba(17,24,39,0.95),var(--bg))}}
 header h1{{font-family:'JetBrains Mono',monospace;font-size:1.4rem;font-weight:700;background:linear-gradient(135deg,var(--ac),#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
 .meta{{display:flex;gap:1.2rem;margin-top:0.4rem;font-size:0.75rem;color:var(--dim);font-family:'JetBrains Mono',monospace}}
 .meta .pulse{{width:8px;height:8px;border-radius:50%;background:var(--grn);animation:pulse 2s infinite;display:inline-block}}
 @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.3}}}}
 
 .wrap{{max-width:1300px;margin:0 auto;padding:1.2rem;position:relative;z-index:1}}
-
-/* Stats */
 .stats{{display:flex;gap:0.6rem;margin:1.2rem 0;flex-wrap:wrap}}
 .st{{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:0.8rem 1.2rem;text-align:center;flex:1;min-width:100px}}
 .st .n{{font-family:'JetBrains Mono',monospace;font-size:1.8rem;font-weight:700}}
 .st .l{{font-size:0.65rem;color:var(--dim);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.8px;margin-top:2px}}
-
-/* Top5 Cards */
 .sec{{font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:700;margin:1.8rem 0 0.8rem;display:flex;align-items:center;gap:0.4rem}}
 .sec .dot{{width:8px;height:8px;border-radius:50%}}
-
 .top5{{display:grid;grid-template-columns:repeat(5,1fr);gap:0.8rem;margin-bottom:2rem}}
 .top-card{{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:1rem;position:relative;transition:all 0.2s;display:flex;flex-direction:column;align-items:center;text-align:center;gap:0.5rem}}
 .top-card:hover{{border-color:var(--ac);box-shadow:0 0 24px rgba(56,189,248,0.1);transform:translateY(-3px)}}
@@ -252,35 +288,27 @@ header h1{{font-family:'JetBrains Mono',monospace;font-size:1.4rem;font-weight:7
 .top-lbl{{display:block;font-size:0.55rem;color:var(--dim);margin-top:1px}}
 .top-zone{{margin-top:0.2rem}}
 .top-signals{{margin-top:0.3rem;display:flex;flex-wrap:wrap;justify-content:center;gap:2px}}
-
-/* Market Bars */
 .market-section{{margin-bottom:1.5rem}}
 .mb{{margin-bottom:0.5rem}}
 .mb-label{{font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:3px}}
 .mb-label span{{color:var(--dim)}}
 .mb-bars{{display:flex;gap:2px;height:22px;border-radius:4px;overflow:hidden}}
 .zb{{display:flex;align-items:center;justify-content:center;font-size:0.6rem;font-weight:700;color:white;font-family:'JetBrains Mono',monospace;border-radius:3px;min-width:18px;transition:width 0.8s ease}}
-
-/* Table */
 .sec2{{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin:1.5rem 0 0.6rem}}
 .search input{{padding:0.45rem 0.8rem;background:var(--s2);border:1px solid var(--bd);border-radius:6px;color:var(--tx);font-family:'JetBrains Mono',monospace;font-size:0.75rem;outline:none;width:260px}}
 .search input:focus{{border-color:var(--ac)}}
 .search input::placeholder{{color:var(--dim)}}
-
-.tabs{{display:flex;gap:0.4rem}}
+.tabs{{display:flex;gap:0.4rem;flex-wrap:wrap}}
 .tb{{padding:0.4rem 0.8rem;border:1px solid var(--bd);border-radius:5px;background:transparent;color:var(--dim);font-family:'JetBrains Mono',monospace;font-size:0.7rem;cursor:pointer;transition:all 0.15s}}
 .tb:hover{{border-color:var(--ac);color:var(--tx)}}
 .tb.active{{background:var(--ac);color:var(--bg);border-color:var(--ac);font-weight:700}}
 .tp{{display:none}}.tp.active{{display:block}}
-
 .tw{{overflow-x:auto;border:1px solid var(--bd);border-radius:8px;background:var(--s1);max-height:75vh;overflow-y:auto}}
 table{{width:100%;border-collapse:collapse;font-size:0.78rem}}
 th{{position:sticky;top:0;z-index:10;background:var(--s2);padding:0.6rem 0.7rem;text-align:left;font-weight:600;font-family:'JetBrains Mono',monospace;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--dim);border-bottom:1px solid var(--bd);white-space:nowrap}}
 td{{padding:0.45rem 0.7rem;border-bottom:1px solid var(--bd);font-family:'JetBrains Mono',monospace;font-size:0.75rem;white-space:nowrap}}
 tr:hover td{{background:rgba(56,189,248,0.04)}}
-
 .sortable{{cursor:pointer;user-select:none}}.sortable:hover{{color:var(--ac)}}
-
 .zone-badge{{display:inline-block;padding:2px 7px;border-radius:3px;font-size:0.6rem;font-weight:700;letter-spacing:0.2px}}
 .z-strong{{background:var(--red);color:white}}
 .z-buy{{background:var(--org);color:white}}
@@ -288,10 +316,7 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .z-neutral{{background:rgba(34,197,94,0.15);color:var(--grn)}}
 .z-over{{background:rgba(168,85,247,0.2);color:var(--prp)}}
 .z-extreme{{background:rgba(236,72,153,0.2);color:var(--pnk)}}
-
 .neg{{color:var(--red)}}.pos{{color:var(--grn)}}.hot{{color:var(--org);font-weight:700}}.dim{{color:var(--dim)}}
-
-/* Signal Tags */
 .sig-cell{{white-space:normal;min-width:80px;max-width:180px}}
 .sig{{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.55rem;font-weight:700;margin:1px;letter-spacing:0.2px}}
 .sig-div{{background:rgba(34,197,94,0.2);color:var(--grn)}}
@@ -303,7 +328,6 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .sig-bull{{background:rgba(234,179,8,0.2);color:var(--ylw)}}
 .sig-gc{{background:rgba(249,115,22,0.2);color:var(--org)}}
 .sig-sec{{background:rgba(168,85,247,0.2);color:var(--prp)}}
-
 .sc{{position:relative;width:46px;height:20px;background:var(--s2);border-radius:3px;overflow:hidden;display:inline-flex;align-items:center;justify-content:center}}
 .sc b{{position:relative;z-index:2;font-size:0.65rem;font-family:'JetBrains Mono',monospace}}
 .sf{{position:absolute;left:0;top:0;height:100%;border-radius:3px;z-index:1}}
@@ -311,14 +335,10 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .s-m .sf{{background:linear-gradient(90deg,#ea580c,#f97316)}}.s-m b{{color:white}}
 .s-l .sf{{background:linear-gradient(90deg,#ca8a04,#eab308)}}.s-l b{{color:var(--bg)}}
 .s-n .sf{{background:var(--s2)}}.s-n b{{color:var(--dim)}}
-
 .row-hot td{{background:rgba(239,68,68,0.07)!important}}.row-hot td:first-child{{border-left:3px solid var(--red)}}
 .row-buy td{{background:rgba(249,115,22,0.05)!important}}
 .row-warm td{{background:rgba(234,179,8,0.03)!important}}
-
 footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font-family:'JetBrains Mono',monospace;border-top:1px solid var(--bd);margin-top:2rem}}
-
-/* Legend */
 .legend{{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:1rem 1.2rem;margin-bottom:1.5rem}}
 .legend-title{{font-family:'JetBrains Mono',monospace;font-size:0.75rem;font-weight:700;color:var(--ac);margin-bottom:0.6rem}}
 .legend-items{{display:flex;flex-wrap:wrap;gap:0.5rem 1.5rem}}
@@ -341,16 +361,23 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
   .search input{{width:100%}}
   .hide-m{{display:none}}
   table{{font-size:0.68rem}}td,th{{padding:0.35rem 0.45rem}}
+  .nav a{{padding:0.6rem 1rem;font-size:0.7rem}}
 }}
 </style>
 </head>
 <body>
 <div class="grain"></div>
+
+<div class="nav">
+  <a href="index.html" class="{jp_cls}">🇯🇵 日本株</a>
+  <a href="us.html" class="{us_cls}">🇺🇸 米国株</a>
+</div>
+
 <header>
-  <h1>理想乖離ダッシュボード</h1>
+  <h1>理想乖離ダッシュボード — {title}</h1>
   <div class="meta">
     <span><span class="pulse"></span> {today}</span>
-    <span>全{len(df)}銘柄</span>
+    <span>全{len(page_df)}銘柄</span>
   </div>
 </header>
 
@@ -366,7 +393,7 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
 
   <div class="sec"><span class="dot" style="background:var(--red)"></span> 注目銘柄 Top5</div>
   <div class="top5">
-    {_top5_cards(df)}
+    {_top5_cards(page_df)}
   </div>
 
   <div class="sec"><span class="dot" style="background:var(--ac)"></span> ゾーン分布</div>
@@ -384,7 +411,7 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
       <div class="legend-item"><span class="sig sig-half">半値</span>過去最高値から50%以上下落</div>
       <div class="legend-item"><span class="sig sig-ma">日足25MA上抜け</span>日足終値が25日移動平均線を上抜け</div>
       <div class="legend-item"><span class="sig sig-bull">月足陽転</span>前2ヶ月陰線→直近月が陽線に転換</div>
-      <div class="legend-item"><span class="sig sig-gc">月足GC</span>月足9MA(短期)が24MA(中期)をゴールデンクロス</div>
+      <div class="legend-item"><span class="sig sig-gc">月足GC</span>月足9MAが24MAをゴールデンクロス</div>
       <div class="legend-item"><span class="sig sig-sec">セクター唯一安</span>同セクター内で唯一のマイナス乖離銘柄</div>
     </div>
   </div>
@@ -394,22 +421,12 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
     <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
       <div class="search"><input type="text" id="si" placeholder="コード・銘柄名で検索..." oninput="doFilter()"></div>
       <div class="tabs">
-        <button class="tb active" onclick="switchTab('all',this)">全て ({len(df)})</button>
-        <button class="tb" onclick="switchTab('n225',this)">日経 ({len(all_data['Nikkei225'])})</button>
-        <button class="tb" onclick="switchTab('dow',this)">ダウ ({len(all_data['Dow30'])})</button>
-        <button class="tb" onclick="switchTab('ndq',this)">NASDAQ ({len(all_data['NASDAQ100'])})</button>
-        <button class="tb" onclick="switchTab('arst',this)">配当貴族 ({len(all_data.get('配当貴族',[]))})</button>
-        <button class="tb" onclick="switchTab('hdiv',this)">SP500高配当 ({len(all_data.get('SP500高配当',[]))})</button>
+        {tab_buttons}
       </div>
     </div>
   </div>
 
-  <div id="tab-all" class="tp active">{_table(df.to_dict('records'), 'tbl-all')}</div>
-  <div id="tab-n225" class="tp">{_table(all_data['Nikkei225'], 'tbl-n225')}</div>
-  <div id="tab-dow" class="tp">{_table(all_data['Dow30'], 'tbl-dow')}</div>
-  <div id="tab-ndq" class="tp">{_table(all_data['NASDAQ100'], 'tbl-ndq')}</div>
-  <div id="tab-arst" class="tp">{_table(all_data.get('配当貴族',[]), 'tbl-arst')}</div>
-  <div id="tab-hdiv" class="tp">{_table(all_data.get('SP500高配当',[]), 'tbl-hdiv')}</div>
+  {tab_panels}
 
 </div>
 
@@ -468,8 +485,6 @@ def main():
             "-2σ株価": "price_at_2s", "-3σ株価": "price_at_3s",
             "-2σまで%": "dist_to_2s", "配当利回り%": "div_yield", "1株配当": "div_per_share",
             "配当@-2σ%": "div_at_2s",
-            "配当3%株価": "price_at_3pct", "配当4%株価": "price_at_4pct",
-            "配当5%株価": "price_at_5pct", "配当6%株価": "price_at_6pct",
             "標準偏差": "std", "統計日数": "stat_days",
         }
         df.rename(columns=col_map, inplace=True)
@@ -493,13 +508,40 @@ def main():
     df.sort_values("dist_to_2s", ascending=True, inplace=True)
     df.reset_index(drop=True, inplace=True)
 
-    html = generate_html(df, today)
-    path = os.path.join(PAGES_DIR, "index.html")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
+    # ===== 日本株ページ (index.html) =====
+    jp_config = {
+        "title": "日本株",
+        "markets": ["Nikkei225"],
+        "tabs": [("n225", "日経225", "Nikkei225")],
+        "nav_active": "jp",
+    }
+    jp_html = generate_html(df, today, jp_config)
+    jp_path = os.path.join(PAGES_DIR, "index.html")
+    with open(jp_path, "w", encoding="utf-8") as f:
+        f.write(jp_html)
+    print(f"  Saved: {jp_path}")
+
+    # ===== 米国株ページ (us.html) =====
+    us_config = {
+        "title": "米国株",
+        "markets": ["Dow30", "NASDAQ100", "配当貴族", "SP500高配当"],
+        "tabs": [
+            ("dow", "ダウ30", "Dow30"),
+            ("ndq", "NASDAQ100", "NASDAQ100"),
+            ("arst", "配当貴族", "配当貴族"),
+            ("hdiv", "SP500高配当", "SP500高配当"),
+        ],
+        "nav_active": "us",
+    }
+    us_html = generate_html(df, today, us_config)
+    us_path = os.path.join(PAGES_DIR, "us.html")
+    with open(us_path, "w", encoding="utf-8") as f:
+        f.write(us_html)
+    print(f"  Saved: {us_path}")
+
     with open(os.path.join(PAGES_DIR, ".nojekyll"), "w"):
         pass
-    print(f"  Saved: {path}")
+    print("  Web dashboard generated (2 pages).")
 
 
 if __name__ == "__main__":
