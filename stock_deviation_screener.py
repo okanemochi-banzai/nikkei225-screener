@@ -575,24 +575,16 @@ def calc_deviation(ticker_str, name, market):
         # 優良財務フラグ: 自己資本比率50%以上 かつ ROE10%以上
         is_quality = equity_ratio >= 50 and roe >= 10
 
-        # シグナルまとめ
+        # シグナルまとめ（4種類に統合）
         signals = []
         if flag_high_div:
             signals.append("高配当")
-        if pbr_under1:
-            signals.append("PBR1倍割れ")
-        if rsi_oversold:
-            signals.append("RSI30以下")
-        if is_quality:
-            signals.append("優良財務")
-        if half_from_ath:
-            signals.append("半値")
-        if cross_above_25ma:
-            signals.append("日足25MA上抜け")
-        if monthly_bullish:
-            signals.append("月足陽転")
-        if method12:
-            signals.append("月足GC")
+        if zone in ["STRONG BUY", "BUY ZONE"]:
+            signals.append("-2σ突入")
+        if pbr_under1 or is_quality:
+            signals.append("優良割安")
+        if cross_above_25ma or method12:
+            signals.append("MA転換")
 
         n_signals = len(signals)
         signal_text = "／".join(signals) if signals else "—"
@@ -656,11 +648,7 @@ def calc_deviation(ticker_str, name, market):
         elif biz_momentum == "微増":
             score += 2
 
-        # (8) RSI売られすぎ (5点)
-        if rsi_oversold:
-            score += 5
-
-        # (9) 優良財務ボーナス (最大5点) — 自己資本比率50%以上 かつ ROE10%以上
+        # (8) 優良財務ボーナス (最大5点) — 自己資本比率50%以上 かつ ROE10%以上
         if is_quality:
             score += 5
 
@@ -781,25 +769,6 @@ def main():
 
     # DataFrameに変換・ソート
     df = pd.DataFrame(results)
-
-    # ⑦ セクター内で唯一下落している銘柄を判定
-    df["sector_sole_dip"] = False
-    for sector in df["sector"].unique():
-        if not sector:
-            continue
-        sec_df = df[df["sector"] == sector]
-        if len(sec_df) < 3:
-            continue
-        # セクター内で乖離率マイナスが1銘柄だけ
-        dipping = sec_df[sec_df["deviation"] < 0]
-        others = sec_df[sec_df["deviation"] >= 0]
-        if len(dipping) == 1 and len(others) >= 2:
-            idx = dipping.index[0]
-            df.loc[idx, "sector_sole_dip"] = True
-            # シグナルに追加
-            old_sig = df.loc[idx, "signals"]
-            df.loc[idx, "signals"] = (old_sig + "／セクター唯一安" if old_sig != "—" else "セクター唯一安")
-            df.loc[idx, "n_signals"] = df.loc[idx, "n_signals"] + 1
 
     df.sort_values("dist_to_2s", ascending=True, inplace=True)
     df.reset_index(drop=True, inplace=True)
