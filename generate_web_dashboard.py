@@ -137,17 +137,12 @@ def _row(rank, r):
 
 
 def _signals_html(r):
-    """シグナルをタグ表示"""
+    """シグナルをタグ表示（4種類）"""
     tags = []
     if r.get("flag_high_div"): tags.append('<span class="sig sig-div">高配当</span>')
-    if r.get("pbr_under1"): tags.append('<span class="sig sig-pbr">PBR&lt;1</span>')
-    if r.get("rsi_oversold"): tags.append('<span class="sig sig-rsi">RSI≤30</span>')
-    if r.get("is_quality"): tags.append('<span class="sig sig-qual">優良財務</span>')
-    if r.get("half_from_ath"): tags.append('<span class="sig sig-half">半値</span>')
-    if r.get("cross_above_25ma"): tags.append('<span class="sig sig-ma">日足25MA上抜け</span>')
-    if r.get("monthly_bullish"): tags.append('<span class="sig sig-bull">月足陽転</span>')
-    if r.get("method12"): tags.append('<span class="sig sig-gc">月足GC</span>')
-    if r.get("sector_sole_dip"): tags.append('<span class="sig sig-sec">セクター唯一安</span>')
+    if r.get("zone") in ["STRONG BUY", "BUY ZONE"]: tags.append('<span class="sig sig-buy">-2σ突入</span>')
+    if r.get("pbr_under1") or r.get("is_quality"): tags.append('<span class="sig sig-qual">優良割安</span>')
+    if r.get("cross_above_25ma") or r.get("method12"): tags.append('<span class="sig sig-ma">MA転換</span>')
     return "".join(tags) if tags else '<span class="dim">—</span>'
 
 
@@ -320,14 +315,9 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .sig-cell{{white-space:normal;min-width:80px;max-width:180px}}
 .sig{{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.55rem;font-weight:700;margin:1px;letter-spacing:0.2px}}
 .sig-div{{background:rgba(34,197,94,0.2);color:var(--grn)}}
-.sig-pbr{{background:rgba(239,68,68,0.2);color:var(--red)}}
-.sig-rsi{{background:rgba(239,68,68,0.25);color:var(--red)}}
+.sig-buy{{background:rgba(239,68,68,0.25);color:var(--red)}}
 .sig-qual{{background:rgba(56,189,248,0.2);color:var(--ac)}}
-.sig-half{{background:rgba(239,68,68,0.2);color:var(--red)}}
-.sig-ma{{background:rgba(56,189,248,0.2);color:var(--ac)}}
-.sig-bull{{background:rgba(234,179,8,0.2);color:var(--ylw)}}
-.sig-gc{{background:rgba(249,115,22,0.2);color:var(--org)}}
-.sig-sec{{background:rgba(168,85,247,0.2);color:var(--prp)}}
+.sig-ma{{background:rgba(249,115,22,0.2);color:var(--org)}}
 .sc{{position:relative;width:46px;height:20px;background:var(--s2);border-radius:3px;overflow:hidden;display:inline-flex;align-items:center;justify-content:center}}
 .sc b{{position:relative;z-index:2;font-size:0.65rem;font-family:'JetBrains Mono',monospace}}
 .sf{{position:absolute;left:0;top:0;height:100%;border-radius:3px;z-index:1}}
@@ -405,14 +395,9 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
     <div class="legend-title">シグナル説明</div>
     <div class="legend-items">
       <div class="legend-item"><span class="sig sig-div">高配当</span>日本株4%超・米国株6%超</div>
-      <div class="legend-item"><span class="sig sig-pbr">PBR&lt;1</span>純資産に対して株価が割安</div>
-      <div class="legend-item"><span class="sig sig-rsi">RSI≤30</span>売られすぎ（14日RSIが30以下）</div>
-      <div class="legend-item"><span class="sig sig-qual">優良財務</span>自己資本比率50%以上 かつ ROE10%以上</div>
-      <div class="legend-item"><span class="sig sig-half">半値</span>過去最高値から50%以上下落</div>
-      <div class="legend-item"><span class="sig sig-ma">日足25MA上抜け</span>日足終値が25日移動平均線を上抜け</div>
-      <div class="legend-item"><span class="sig sig-bull">月足陽転</span>前2ヶ月陰線→直近月が陽線に転換</div>
-      <div class="legend-item"><span class="sig sig-gc">月足GC</span>月足9MAが24MAをゴールデンクロス</div>
-      <div class="legend-item"><span class="sig sig-sec">セクター唯一安</span>同セクター内で唯一のマイナス乖離銘柄</div>
+      <div class="legend-item"><span class="sig sig-buy">-2σ突入</span>統計的な買いゾーン（-2σ以下）</div>
+      <div class="legend-item"><span class="sig sig-qual">優良割安</span>PBR1倍割れ or 自己資本比率50%+ROE10%</div>
+      <div class="legend-item"><span class="sig sig-ma">MA転換</span>日足25MA上抜け or 月足ゴールデンクロス</div>
     </div>
   </div>
 
