@@ -119,7 +119,7 @@ def _row(rank, r):
       <td class="sig-cell">{_signals_html(r)}</td>
       <td><span class="zone-badge {ZONE_CLS.get(zone,'')}">{ZONE_JP.get(zone,zone)}</span></td>
       <td><b>{r['ticker']}</b></td>
-      <td>{r['name']}</td>
+      <td>{r['name']} <span class="mkt">{MARKET_JP.get(market, market)}</span></td>
       <td class="hide-m">{r.get('sector','')[:12]}</td>
       <td>{price:,.0f}</td>
       <td class="{'neg' if dev<0 else 'pos'}">{dev:+.1f}%</td>
@@ -217,17 +217,20 @@ def generate_html(df, today, page_config):
     for m in markets:
         all_data[m] = page_df[page_df["market"]==m].to_dict("records")
 
-    # タブボタン生成
-    tab_buttons = f'<button class="tb active" onclick="switchTab(\'all\',this)">全て ({len(page_df)})</button>\n'
-    for tab_id, tab_label, market_key in page_config["tabs"]:
-        data = all_data.get(market_key, [])
-        tab_buttons += f'        <button class="tb" onclick="switchTab(\'{tab_id}\',this)">{tab_label} ({len(data)})</button>\n'
-
-    # タブパネル生成
-    tab_panels = f'  <div id="tab-all" class="tp active">{_table(page_df.to_dict("records"), "tbl-all")}</div>\n'
-    for tab_id, tab_label, market_key in page_config["tabs"]:
-        data = all_data.get(market_key, [])
-        tab_panels += f'  <div id="tab-{tab_id}" class="tp">{_table(data, "tbl-{tab_id}")}</div>\n'
+    # タブ生成（タブがない場合はテーブル直接表示）
+    if page_config["tabs"]:
+        tab_buttons = f'<button class="tb active" onclick="switchTab(\'all\',this)">全て ({len(page_df)})</button>\n'
+        for tab_id, tab_label, market_key in page_config["tabs"]:
+            data = all_data.get(market_key, [])
+            tab_buttons += f'        <button class="tb" onclick="switchTab(\'{tab_id}\',this)">{tab_label} ({len(data)})</button>\n'
+        tab_panels = f'  <div id="tab-all" class="tp active">{_table(page_df.to_dict("records"), "tbl-all")}</div>\n'
+        for tab_id, tab_label, market_key in page_config["tabs"]:
+            data = all_data.get(market_key, [])
+            tab_panels += f'  <div id="tab-{tab_id}" class="tp">{_table(data, "tbl-{tab_id}")}</div>\n'
+        tabs_html = f"""<div class="tabs">{tab_buttons}</div>"""
+    else:
+        tabs_html = ""
+        tab_panels = _table(page_df.to_dict("records"), "tbl-all")
 
     # ナビゲーション
     jp_cls = "nav-active" if nav_active == "jp" else ""
@@ -312,6 +315,7 @@ tr:hover td{{background:rgba(56,189,248,0.04)}}
 .z-over{{background:rgba(168,85,247,0.2);color:var(--prp)}}
 .z-extreme{{background:rgba(236,72,153,0.2);color:var(--pnk)}}
 .neg{{color:var(--red)}}.pos{{color:var(--grn)}}.hot{{color:var(--org);font-weight:700}}.dim{{color:var(--dim)}}
+.mkt{{font-size:0.5rem;color:var(--dim);background:var(--s2);padding:1px 4px;border-radius:2px;margin-left:4px;font-weight:400;vertical-align:middle}}
 .sig-cell{{white-space:normal;min-width:80px;max-width:180px}}
 .sig{{display:inline-block;padding:1px 5px;border-radius:3px;font-size:0.55rem;font-weight:700;margin:1px;letter-spacing:0.2px}}
 .sig-div{{background:rgba(34,197,94,0.2);color:var(--grn)}}
@@ -405,9 +409,7 @@ footer{{text-align:center;padding:1.5rem;font-size:0.65rem;color:var(--dim);font
     <div class="sec" style="margin:0"><span class="dot" style="background:var(--grn)"></span> 全銘柄データ</div>
     <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
       <div class="search"><input type="text" id="si" placeholder="コード・銘柄名で検索..." oninput="doFilter()"></div>
-      <div class="tabs">
-        {tab_buttons}
-      </div>
+      {tabs_html}
     </div>
   </div>
 
@@ -426,7 +428,10 @@ function switchTab(id,btn){{
 }}
 function doFilter(){{
   const q=document.getElementById('si').value.toLowerCase();
-  document.querySelectorAll('.tp.active tbody tr').forEach(r=>{{
+  // タブあり: .tp.active内を検索、タブなし: 全tbody内を検索
+  let rows = document.querySelectorAll('.tp.active tbody tr');
+  if (rows.length === 0) rows = document.querySelectorAll('tbody tr');
+  rows.forEach(r=>{{
     r.style.display=r.textContent.toLowerCase().includes(q)?'':'none';
   }});
 }}
@@ -510,12 +515,7 @@ def main():
     us_config = {
         "title": "米国株",
         "markets": ["Dow30", "NASDAQ100", "配当貴族", "SP500高配当"],
-        "tabs": [
-            ("dow", "ダウ30", "Dow30"),
-            ("ndq", "NASDAQ100", "NASDAQ100"),
-            ("arst", "配当貴族", "配当貴族"),
-            ("hdiv", "SP500高配当", "SP500高配当"),
-        ],
+        "tabs": [],
         "nav_active": "us",
     }
     us_html = generate_html(df, today, us_config)
